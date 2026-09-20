@@ -1,6 +1,7 @@
 import json
 import slicer
 import qt
+import vtk
 from slicer.ScriptedLoadableModule import *
 from slicer.util import VTKObservationMixin
 
@@ -323,20 +324,29 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
     def calculateMeasurements(self):
         results={}
         for key in ("lat","flex","ext"):
-            p=self.pointMap(key); prefix=self.PREFIX[key]; r={}
-            q=lambda name: p.get(prefix+" "+name)
-            if all(q(x) for x in ("L1 SA","L1 SP","S1 SA","S1 SP")): r["LL_L1_S1_deg"]=self.angleBetween(q("L1 SA"),q("L1 SP"),q("S1 SA"),q("S1 SP"))
+            p=self.pointMap(key); prefix=self.PREFIX[key]; r={}; q=lambda name: p.get(prefix+" "+name)
+            if all(q(x) for x in ("L1 SA","L1 SP","S1 SA","S1 SP")): r["LL_deg"]=self.angleBetween(q("L1 SA"),q("L1 SP"),q("S1 SA"),q("S1 SP"))
             if all(q(x) for x in ("L4 SA","L4 SP","S1 SA","S1 SP")): r["LL_L4_S1_deg"]=self.angleBetween(q("L4 SA"),q("L4 SP"),q("S1 SA"),q("S1 SP"))
+            if all(q(x) for x in ("S1 SA","S1 SP")):
+                import math
+                sa,sp=q("S1 SA"),q("S1 SP"); r["SS_deg"]=abs(math.degrees(math.atan2(sp[1]-sa[1],sp[0]-sa[0])))
             for upper,lower in zip(("L1","L2","L3","L4","L5"),("L2","L3","L4","L5","S1")):
                 needed=(upper+" IA",upper+" IP",lower+" SA",lower+" SP")
-                if all(q(x) for x in needed): r[upper+"-"+lower+"_disc_angle_deg"]=self.angleBetween(q(upper+" IA"),q(upper+" IP"),q(lower+" SA"),q(lower+" SP"))
+                if all(q(x) for x in needed):
+                    ua,up,la,lp=[q(x) for x in needed]
+                    r["IVA_"+upper+"_"+lower+"_deg"]=self.angleBetween(ua,up,la,lp)
+                    import math
+                    dist=lambda a,b: math.hypot(b[0]-a[0],b[1]-a[1])
+                    # Lan et al. 2019: IHI=(anterior height + posterior height)/(superior width + inferior width)*100.
+                    den=dist(ua,up)+dist(la,lp)
+                    if den>0: r["IHI_"+upper+"_"+lower+"_pct"]=100.0*(dist(ua,la)+dist(up,lp))/den
             if key=="lat" and all(q(x) for x in ("S1 SA","S1 SP","FH_R_CENTER","FH_L_CENTER")):
                 import math
-                sa,sp=q("S1 SA"),q("S1 SP"); s=((sa[0]+sp[0])/2.0,(sa[1]+sp[1])/2.0)
+                sa,sp=q("S1 SA"),q("S1 SP"); sm=((sa[0]+sp[0])/2.0,(sa[1]+sp[1])/2.0)
                 fr,fl=q("FH_R_CENTER"),q("FH_L_CENTER"); fh=((fr[0]+fl[0])/2.0,(fr[1]+fl[1])/2.0)
-                dx,dy=sp[0]-sa[0],sp[1]-sa[1]; r["SS_deg"]=abs(math.degrees(math.atan2(dy,dx)))
-                vx,vy=s[0]-fh[0],s[1]-fh[1]; r["PT_deg"]=abs(math.degrees(math.atan2(vx,vy)))
-                nx,ny=-dy,dx; hx,hy=fh[0]-s[0],fh[1]-s[1]; r["PI_deg"]=abs(math.degrees(math.atan2(nx*hy-ny*hx,nx*hx+ny*hy)))
+                dx,dy=sp[0]-sa[0],sp[1]-sa[1]; vx,vy=sm[0]-fh[0],sm[1]-fh[1]
+                r["PT_deg"]=abs(math.degrees(math.atan2(vx,vy)))
+                nx,ny=-dy,dx; hx,hy=fh[0]-sm[0],fh[1]-sm[1]; r["PI_deg"]=abs(math.degrees(math.atan2(nx*hy-ny*hx,nx*hx+ny*hy)))
             results[key]=r
         dyn={}
         for name in set(results.get("flex",{})).intersection(results.get("ext",{})):
@@ -345,11 +355,40 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         lines=[]
         for section,data in results.items():
             lines.append("["+section.upper()+"]"); lines.extend("%s = %.2f" % (name,value) for name,value in data.items()); lines.append("")
-        self.resultsText.plainText="\\n".join(lines) if lines else ("No hay landmarks suficientes." if self.lang=="es" else "Insufficient landmarks.")
-
+        lines.append("ECA: pendiente de landmark de concavidad; no puede inferirse de las cuatro esquinas vertebrales.")
+        self.resultsText.plainText="\\n".join(lines)
     def copyResults(self):
         if not self.lastResults: self.calculateMeasurements()
         qt.QApplication.clipboard().setText(json.dumps(self.lastResults,indent=2,ensure_ascii=False))
+
+    def clearMeasurementOverlays(self):
+        for node in list(slicer.util.getNodesByClass("vtkMRMLMarkupsLineNode")):
+            if node.GetAttribute("ONeSpineRx.MeasurementOverlay")=="1": slicer.mrmlScene.RemoveNode(node)
+
+    def addMeasurementLine(self,name,a,b,color=(0.95,0.25,0.15)):
+        node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode","ONeSpineRx_"+name)
+        node.SetAttribute("ONeSpineRx.MeasurementOverlay","1")
+        node.AddControlPointWorld(vtk.vtkVector3d(a[0],a[1],a[2])); node.AddControlPointWorld(vtk.vtkVector3d(b[0],b[1],b[2]))
+        d=node.GetDisplayNode(); d.SetSelectedColor(*color); d.SetColor(*color); d.SetLineThickness(0.35); d.SetTextScale(1.15); d.SetPointLabelsVisibility(False)
+        return node
+
+    def buildMeasurementOverlays(self,key):
+        self.clearMeasurementOverlays(); p=self.pointMap(key); prefix=self.PREFIX[key]; q=lambda name: p.get(prefix+" "+name)
+        # Endplate traces used for LL, IVA, SS and IHI.
+        for level in ("L1","L2","L3","L4","L5"):
+            if q(level+" SA") and q(level+" SP"): self.addMeasurementLine(level+"_SUP",q(level+" SA"),q(level+" SP"))
+            if q(level+" IA") and q(level+" IP"): self.addMeasurementLine(level+"_INF",q(level+" IA"),q(level+" IP"))
+        if q("S1 SA") and q("S1 SP"): self.addMeasurementLine("S1_SUP",q("S1 SA"),q("S1 SP"))
+        # Disc-height traces reproduce the anterior/posterior components of IHI.
+        for upper,lower in zip(("L1","L2","L3","L4","L5"),("L2","L3","L4","L5","S1")):
+            if q(upper+" IA") and q(lower+" SA"): self.addMeasurementLine("IHI_"+upper+"_"+lower+"_ANT",q(upper+" IA"),q(lower+" SA"),(0.15,0.75,0.95))
+            if q(upper+" IP") and q(lower+" SP"): self.addMeasurementLine("IHI_"+upper+"_"+lower+"_POST",q(upper+" IP"),q(lower+" SP"),(0.15,0.75,0.95))
+        # Spinopelvic construction on neutral lateral.
+        if key=="lat" and q("FH_R_CENTER") and q("FH_L_CENTER") and q("S1 SA") and q("S1 SP"):
+            fr,fl=q("FH_R_CENTER"),q("FH_L_CENTER"); fh=[(fr[i]+fl[i])/2.0 for i in range(3)]
+            sa,sp=q("S1 SA"),q("S1 SP"); sm=[(sa[i]+sp[i])/2.0 for i in range(3)]
+            self.addMeasurementLine("HIP_AXIS_TO_S1",fh,sm,(0.85,0.55,0.10))
+        return True
 
     def generateFigure(self):
         if not self.lastResults: self.calculateMeasurements()
@@ -358,8 +397,9 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         volume=self.selectors[key].currentNode()
         if volume: slicer.util.setSliceViewerLayers(background=volume,fit=True)
         for projection,node in self.markupNodes.items():
-            if node.GetDisplayNode(): node.GetDisplayNode().SetVisibility(projection==key)
-        path=qt.QFileDialog.getSaveFileName(slicer.util.mainWindow(),"Guardar imagen / Save image","","PNG (*.png)")
+            if node.GetDisplayNode(): node.GetDisplayNode().SetVisibility(False)
+        self.buildMeasurementOverlays(key)
+        path=qt.QFileDialog.getSaveFileName(slicer.util.mainWindow(),"Guardar imagen con trazos / Save traced image","","PNG (*.png)")
         if not path: return
         if not path.lower().endswith(".png"): path+=".png"
         widget=slicer.app.layoutManager().sliceWidget("Red")
