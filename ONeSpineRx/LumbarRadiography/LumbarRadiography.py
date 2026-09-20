@@ -11,7 +11,7 @@ TRANSLATIONS = {
         "landmarks":"Registro manual de landmarks", "start":"Iniciar registro",
         "importDicom":"Importar DICOM", "categorize":"Categorizar", "validate":"Validar estudio",
         "validation":"Importación, categorización y validación", "assigned":"Asignada", "missing":"Faltante",
-        "place":"Marcar punto", "skip":"Saltar", "finish":"Finalizar",
+        "place":"Marcar punto", "skip":"Saltar", "finish":"Finalizar", "previous":"Anterior", "next":"Siguiente", "edit":"Modificar", "save":"Guardar cambios",
         "current":"Punto actual", "progress":"Progreso", "instructions":"Instrucciones",
         "noVolume":"Seleccione un volumen para esta proyección.",
         "ready":"Seleccione las cuatro proyecciones y pulse Iniciar registro en la proyección que desea medir.",
@@ -24,7 +24,7 @@ TRANSLATIONS = {
         "landmarks":"Manual landmark registration", "start":"Start registration",
         "importDicom":"Import DICOM", "categorize":"Categorize", "validate":"Validate study",
         "validation":"Import, categorization and validation", "assigned":"Assigned", "missing":"Missing",
-        "place":"Place point", "skip":"Skip", "finish":"Finish",
+        "place":"Place point", "skip":"Skip", "finish":"Finish", "previous":"Previous", "next":"Next", "edit":"Edit", "save":"Save changes",
         "current":"Current landmark", "progress":"Progress", "instructions":"Instructions",
         "noVolume":"Select a volume for this projection.",
         "ready":"Select all four projections and press Start registration on the projection you want to measure.",
@@ -67,7 +67,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         ScriptedLoadableModuleWidget.__init__(self,parent)
         VTKObservationMixin.__init__(self)
         self.logic=None; self.lang="es"; self.activeProjection=None
-        self.markupNodes={}; self.indices={k:0 for k in self.PROJECTION_KEYS}; self.skipped={k:[] for k in self.PROJECTION_KEYS}
+        self.markupNodes={}; self.indices={k:0 for k in self.PROJECTION_KEYS}; self.skipped={k:[] for k in self.PROJECTION_KEYS}; self.markupObserverTags={}
 
     def setup(self):
         ScriptedLoadableModuleWidget.setup(self); self.logic=LumbarRadiographyLogic()
@@ -103,14 +103,14 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.currentLabel=qt.QLabel(); self.currentLabel.setStyleSheet("font-weight: bold; font-size: 16px;")
         self.helpLabel=qt.QLabel(); self.helpLabel.wordWrap=True
         self.progressLabel=qt.QLabel(); v.addWidget(self.currentLabel); v.addWidget(self.helpLabel); v.addWidget(self.progressLabel)
-        buttons=qt.QHBoxLayout(); self.placeButton=qt.QPushButton(); self.skipButton=qt.QPushButton(); self.finishButton=qt.QPushButton()
-        for b in (self.skipButton,self.finishButton):
-            buttons.addWidget(b)
-            b.enabled=False
-        self.placeButton.visible=False
+        buttons=qt.QHBoxLayout()
+        self.previousButton=qt.QPushButton(); self.nextButton=qt.QPushButton(); self.skipButton=qt.QPushButton()
+        self.editButton=qt.QPushButton(); self.saveButton=qt.QPushButton(); self.finishButton=qt.QPushButton()
+        for b in (self.previousButton,self.nextButton,self.skipButton,self.editButton,self.saveButton,self.finishButton):
+            buttons.addWidget(b); b.enabled=False
         v.addLayout(buttons); self.layout.addWidget(self.landmarkBox)
         self.calibrationLabel=qt.QLabel(); self.calibrationLabel.wordWrap=True; self.layout.addWidget(self.calibrationLabel)
-        self.placeButton.connect("clicked()",self.placeCurrent); self.skipButton.connect("clicked()",self.skipCurrent); self.finishButton.connect("clicked()",self.finishRegistration)
+        self.previousButton.connect("clicked()",self.previousLandmark); self.nextButton.connect("clicked()",self.nextLandmark); self.skipButton.connect("clicked()",self.skipCurrent); self.editButton.connect("clicked()",self.editCurrent); self.saveButton.connect("clicked()",self.saveChanges); self.finishButton.connect("clicked()",self.finishRegistration)
         self.languageCombo.connect("currentIndexChanged(int)",self.changeLanguage)
         self.applyLanguage(); self.layout.addStretch(1)
 
@@ -126,11 +126,14 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         for key in self.PROJECTION_KEYS:
             getattr(self,key+"Label").text=self.tr(key)
             getattr(self,key+"StartButton").text=self.tr("start")
-        self.skipButton.text=self.tr("skip"); self.finishButton.text=self.tr("finish")
+        self.previousButton.text=self.tr("previous"); self.nextButton.text=self.tr("next"); self.skipButton.text=self.tr("skip"); self.editButton.text=self.tr("edit"); self.saveButton.text=self.tr("save"); self.finishButton.text=self.tr("finish")
         self.calibrationLabel.text=self.tr("calibration")
         if self.activeProjection is None: self.currentLabel.text=self.tr("ready"); self.helpLabel.text=""; self.progressLabel.text=""
 
-    def labels(self,key): return self.AP_LABELS if key=="ap" else self.LATERAL_LABELS
+    def labels(self,key):
+        points=self.AP_POINTS if key=="ap" else (self.LAT_POINTS if key=="lat" else self.SAGITTAL_POINTS)
+        prefix=self.PREFIX[key]
+        return [prefix+" "+p for p in points]
 
     def importDicom(self):
         slicer.util.selectModule("DICOM")
@@ -185,17 +188,63 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
 
     def startRegistration(self,key):
         volume=self.selectors[key].currentNode()
-        if volume is None: slicer.util.errorDisplay(self.tr("noVolume")); return
+        if volume is None:
+            slicer.util.errorDisplay(self.tr("noVolume")); return
         self.activeProjection=key
+        for projection,node in self.markupNodes.items():
+            if node.GetDisplayNode():
+                node.GetDisplayNode().SetVisibility(projection==key)
         if key not in self.markupNodes:
-            node=self.logic.createLandmarkNode("ONeSpineRx_"+key.upper()); node.SetAttribute("ONeSpineRx.Projection",key); node.SetAttribute("ONeSpineRx.SourceVolumeID",volume.GetID()); node.SetAttribute("ONeSpineRx.DefinitionVersion",self.logic.DEFINITION_VERSION); self.markupNodes[key]=node
-        self.placeButton.enabled=True; self.skipButton.enabled=True; self.finishButton.enabled=True
-        slicer.util.setSliceViewerLayers(background=volume,fit=True); self.updateGuide()
+            node=self.logic.createLandmarkNode("ONeSpineRx_"+self.PREFIX[key])
+            node.SetAttribute("ONeSpineRx.Projection",key)
+            node.SetAttribute("ONeSpineRx.SourceVolumeID",volume.GetID())
+            node.SetAttribute("ONeSpineRx.DefinitionVersion",self.logic.DEFINITION_VERSION)
+            color=self.COLORS[key]
+            node.GetDisplayNode().SetSelectedColor(*color)
+            node.GetDisplayNode().SetColor(*color)
+            node.GetDisplayNode().SetTextScale(0.7)
+            self.markupNodes[key]=node
+            tag=node.AddObserver(slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent,self.onPointDefined)
+            self.markupObserverTags[key]=tag
+        self.indices[key]=min(self.indices[key],len(self.labels(key))-1)
+        for b in (self.previousButton,self.nextButton,self.skipButton,self.editButton,self.saveButton,self.finishButton):
+            b.enabled=True
+        slicer.util.setSliceViewerLayers(background=volume,fit=True)
+        self.updateGuide()
+        self.activatePlacement()
+
+    def activatePlacement(self):
+        if self.activeProjection is None: return
+        node=self.markupNodes[self.activeProjection]
+        slicer.mrmlScene.SetActiveMRMLNodeID(node.GetID())
+        interaction=slicer.app.applicationLogic().GetInteractionNode()
+        interaction.SetPlaceModePersistence(1)
+        interaction.SetCurrentInteractionMode(interaction.Place)
+
+    def onPointDefined(self,caller,event):
+        key=self.activeProjection
+        if key is None or caller is not self.markupNodes.get(key): return
+        i=self.indices[key]; labels=self.labels(key)
+        if i>=len(labels): return
+        pointIndex=caller.GetNumberOfControlPoints()-1
+        if pointIndex>=0:
+            caller.SetNthControlPointLabel(pointIndex,labels[i])
+            caller.SetNthControlPointDescription(pointIndex,self.helpFor(labels[i]))
+        self.indices[key]=i+1
+        if self.indices[key]>=len(labels):
+            self.finishRegistration()
+        else:
+            self.updateGuide()
+            self.activatePlacement()
 
     def helpFor(self,label):
-        if label in LANDMARK_HELP: return LANDMARK_HELP[label][self.lang]
-        suffix=label.split("_",1)[1] if "_" in label else label
-        return LANDMARK_HELP.get(suffix,{}).get(self.lang,"")
+        if label.endswith("FH_R_CENTER"):
+            return "Centro de la cabeza femoral derecha." if self.lang=="es" else "Center of the right femoral head."
+        if label.endswith("FH_L_CENTER"):
+            return "Centro de la cabeza femoral izquierda." if self.lang=="es" else "Center of the left femoral head."
+        token=label.split()[-1]
+        mapping={"SA":"AS","SP":"PS","IA":"AI","IP":"PI","SL":"SL","SR":"SR","IL":"IL","IR":"IR"}
+        return LANDMARK_HELP.get(mapping.get(token,token),{}).get(self.lang,"")
 
     def updateGuide(self):
         if self.activeProjection is None: return
@@ -204,20 +253,34 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         label=labels[i]; self.currentLabel.text=f"{self.tr('current')}: {label}"
         self.helpLabel.text=self.helpFor(label); self.progressLabel.text=f"{self.tr('progress')}: {i+1} / {len(labels)}"
 
-    def placeCurrent(self):
-        key=self.activeProjection
-        if key is None: return
-        labels=self.labels(key); i=self.indices[key]
-        if i>=len(labels): return
-        label=labels[i]; node=self.markupNodes[key]
-        before=node.GetNumberOfControlPoints()
-        slicer.mrmlScene.SetActiveMRMLNodeID(node.GetID())
-        interaction=slicer.app.applicationLogic().GetInteractionNode(); interaction.SetPlaceModePersistence(0); interaction.SetCurrentInteractionMode(interaction.Place)
-        node.SetAttribute("ONeSpineRx.PendingLandmark",label)
-        self.currentLabel.text=f"{self.tr('current')}: {label}"
-        self.helpLabel.text=self.helpFor(label)+"\\n\\n"+("Haga clic sobre la radiografía. Después continúe con el siguiente punto." if self.lang=="es" else "Click on the radiograph, then continue with the next point.")
-        # Advancement is explicit to keep Slicer 5.2 behavior predictable.
-        self.indices[key]=i+1
+    def previousLandmark(self):
+        if self.activeProjection is None: return
+        self.indices[self.activeProjection]=max(0,self.indices[self.activeProjection]-1)
+        self.updateGuide()
+
+    def nextLandmark(self):
+        if self.activeProjection is None: return
+        labels=self.labels(self.activeProjection)
+        self.indices[self.activeProjection]=min(len(labels)-1,self.indices[self.activeProjection]+1)
+        self.updateGuide()
+
+    def editCurrent(self):
+        if self.activeProjection is None: return
+        label=self.labels(self.activeProjection)[self.indices[self.activeProjection]]
+        node=self.markupNodes[self.activeProjection]
+        for i in range(node.GetNumberOfControlPoints()):
+            if node.GetNthControlPointLabel(i)==label:
+                node.SetNthControlPointSelected(i,True)
+                self.currentLabel.text=self.tr("current")+": "+label
+                self.helpLabel.text=("Arrastre el marcador seleccionado y pulse Guardar cambios." if self.lang=="es" else "Drag the selected marker, then press Save changes.")
+                return
+
+    def saveChanges(self):
+        if self.activeProjection is None: return
+        node=self.markupNodes[self.activeProjection]
+        for i in range(node.GetNumberOfControlPoints()):
+            node.SetNthControlPointSelected(i,False)
+        node.Modified()
         self.updateGuide()
 
     def skipCurrent(self):
@@ -232,10 +295,10 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             node=self.markupNodes.get(self.activeProjection)
             if node: node.SetAttribute("ONeSpineRx.Skipped",json.dumps(self.skipped[self.activeProjection]))
         self.currentLabel.text=self.tr("complete"); self.helpLabel.text=""; self.progressLabel.text=""
-        self.placeButton.enabled=False; self.skipButton.enabled=False; self.finishButton.enabled=False; self.activeProjection=None
+        for b in (self.previousButton,self.nextButton,self.skipButton,self.editButton,self.saveButton,self.finishButton): b.enabled=False\n        self.activeProjection=None
 
 class LumbarRadiographyLogic(ScriptedLoadableModuleLogic):
-    DEFINITION_VERSION="1.1.0"
+    DEFINITION_VERSION="1.2.0"
     def createLandmarkNode(self,name):
         node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode",name); node.SetDescription("ONeSpineRx manual anatomical landmarks"); return node
     def saveMarkups(self,node,filePath):
