@@ -298,8 +298,9 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             node=self.markupNodes.get(self.activeProjection)
             if node: node.SetAttribute("ONeSpineRx.Skipped",json.dumps(self.skipped[self.activeProjection]))
         self.currentLabel.text=self.tr("complete"); self.helpLabel.text=""; self.progressLabel.text=""
-        for b in (self.previousButton,self.nextButton,self.skipButton,self.editButton,self.saveButton,self.finishButton): b.enabled=False\n        self.activeProjection=None
-
+        for b in (self.previousButton,self.nextButton,self.skipButton,self.editButton,self.saveButton,self.finishButton):
+            b.enabled=False
+        self.activeProjection=None
 class LumbarRadiographyLogic(ScriptedLoadableModuleLogic):
     DEFINITION_VERSION="1.2.0"
     def createLandmarkNode(self,name):
