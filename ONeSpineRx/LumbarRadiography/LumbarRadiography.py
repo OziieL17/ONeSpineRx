@@ -15,7 +15,7 @@ TRANSLATIONS = {
         "current":"Punto actual", "progress":"Progreso", "instructions":"Instrucciones",
         "noVolume":"Seleccione un volumen para esta proyección.",
         "ready":"Seleccione las cuatro proyecciones y pulse Iniciar registro en la proyección que desea medir.",
-        "complete":"Registro finalizado. Revise los puntos antes de calcular o exportar.",
+        "complete":"Registro finalizado. Revise los puntos antes de calcular o exportar.", "results":"Resultados", "calculate":"Calcular medidas", "copy":"Copiar valores", "figure":"Generar imagen",
         "skipped":"Omitido", "calibration":"Las distancias en mm requieren calibración espacial válida.",
     },
     "en": {
@@ -28,7 +28,7 @@ TRANSLATIONS = {
         "current":"Current landmark", "progress":"Progress", "instructions":"Instructions",
         "noVolume":"Select a volume for this projection.",
         "ready":"Select all four projections and press Start registration on the projection you want to measure.",
-        "complete":"Registration finished. Review landmarks before calculation or export.",
+        "complete":"Registration finished. Review landmarks before calculation or export.", "results":"Results", "calculate":"Calculate measurements", "copy":"Copy values", "figure":"Generate image",
         "skipped":"Skipped", "calibration":"Distances in mm require valid spatial calibration.",
     },
 }
@@ -113,6 +113,12 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             buttons.addWidget(b); b.enabled=False
         v.addLayout(buttons); self.layout.addWidget(self.landmarkBox)
         self.calibrationLabel=qt.QLabel(); self.calibrationLabel.wordWrap=True; self.layout.addWidget(self.calibrationLabel)
+        self.resultsBox=qt.QGroupBox(); resultsLayout=qt.QVBoxLayout(self.resultsBox)
+        resultButtons=qt.QHBoxLayout(); self.calculateButton=qt.QPushButton(); self.copyButton=qt.QPushButton(); self.figureButton=qt.QPushButton()
+        resultButtons.addWidget(self.calculateButton); resultButtons.addWidget(self.copyButton); resultButtons.addWidget(self.figureButton); resultsLayout.addLayout(resultButtons)
+        self.resultsText=qt.QTextEdit(); self.resultsText.readOnly=True; self.resultsText.minimumHeight=180; resultsLayout.addWidget(self.resultsText)
+        self.layout.addWidget(self.resultsBox); self.lastResults={}
+        self.calculateButton.connect("clicked()",self.calculateMeasurements); self.copyButton.connect("clicked()",self.copyResults); self.figureButton.connect("clicked()",self.generateFigure)
         self.previousButton.connect("clicked()",self.previousLandmark); self.nextButton.connect("clicked()",self.nextLandmark); self.skipButton.connect("clicked()",self.skipCurrent); self.editButton.connect("clicked()",self.editCurrent); self.saveButton.connect("clicked()",self.saveChanges); self.finishButton.connect("clicked()",self.finishRegistration)
         self.languageCombo.connect("currentIndexChanged(int)",self.changeLanguage)
         self.applyLanguage(); self.layout.addStretch(1)
@@ -124,13 +130,13 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.lang=self.languageCombo.itemData(self.languageCombo.currentIndex); self.applyLanguage(); self.updateGuide()
 
     def applyLanguage(self):
-        self.studyBox.title=self.tr("study"); self.landmarkBox.title=self.tr("landmarks"); self.validationBox.title=self.tr("validation")
+        self.studyBox.title=self.tr("study"); self.landmarkBox.title=self.tr("landmarks"); self.validationBox.title=self.tr("validation"); self.resultsBox.title=self.tr("results")
         self.importButton.text=self.tr("importDicom"); self.categorizeButton.text=self.tr("categorize"); self.validateButton.text=self.tr("validate")
         for key in self.PROJECTION_KEYS:
             getattr(self,key+"Label").text=self.tr(key)
             getattr(self,key+"StartButton").text=self.tr("start")
         self.previousButton.text=self.tr("previous"); self.nextButton.text=self.tr("next"); self.skipButton.text=self.tr("skip"); self.editButton.text=self.tr("edit"); self.saveButton.text=self.tr("save"); self.finishButton.text=self.tr("finish")
-        self.calibrationLabel.text=self.tr("calibration")
+        self.calibrationLabel.text=self.tr("calibration"); self.calculateButton.text=self.tr("calculate"); self.copyButton.text=self.tr("copy"); self.figureButton.text=self.tr("figure")
         if self.activeProjection is None: self.currentLabel.text=self.tr("ready"); self.helpLabel.text=""; self.progressLabel.text=""
 
     def labels(self,key):
@@ -301,6 +307,64 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         for b in (self.previousButton,self.nextButton,self.skipButton,self.editButton,self.saveButton,self.finishButton):
             b.enabled=False
         self.activeProjection=None
+    def pointMap(self,key):
+        node=self.markupNodes.get(key); points={}
+        if not node: return points
+        for i in range(node.GetNumberOfControlPoints()):
+            p=[0.0,0.0,0.0]; node.GetNthControlPointPositionWorld(i,p); points[node.GetNthControlPointLabel(i)]=p
+        return points
+
+    def angleBetween(self,a,b,c,d):
+        import math
+        ux,uy=b[0]-a[0],b[1]-a[1]; vx,vy=d[0]-c[0],d[1]-c[1]
+        angle=abs(math.degrees(math.atan2(ux*vy-uy*vx,ux*vx+uy*vy)))%180.0
+        return min(angle,180.0-angle)
+
+    def calculateMeasurements(self):
+        results={}
+        for key in ("lat","flex","ext"):
+            p=self.pointMap(key); prefix=self.PREFIX[key]; r={}
+            q=lambda name: p.get(prefix+" "+name)
+            if all(q(x) for x in ("L1 SA","L1 SP","S1 SA","S1 SP")): r["LL_L1_S1_deg"]=self.angleBetween(q("L1 SA"),q("L1 SP"),q("S1 SA"),q("S1 SP"))
+            if all(q(x) for x in ("L4 SA","L4 SP","S1 SA","S1 SP")): r["LL_L4_S1_deg"]=self.angleBetween(q("L4 SA"),q("L4 SP"),q("S1 SA"),q("S1 SP"))
+            for upper,lower in zip(("L1","L2","L3","L4","L5"),("L2","L3","L4","L5","S1")):
+                needed=(upper+" IA",upper+" IP",lower+" SA",lower+" SP")
+                if all(q(x) for x in needed): r[upper+"-"+lower+"_disc_angle_deg"]=self.angleBetween(q(upper+" IA"),q(upper+" IP"),q(lower+" SA"),q(lower+" SP"))
+            if key=="lat" and all(q(x) for x in ("S1 SA","S1 SP","FH_R_CENTER","FH_L_CENTER")):
+                import math
+                sa,sp=q("S1 SA"),q("S1 SP"); s=((sa[0]+sp[0])/2.0,(sa[1]+sp[1])/2.0)
+                fr,fl=q("FH_R_CENTER"),q("FH_L_CENTER"); fh=((fr[0]+fl[0])/2.0,(fr[1]+fl[1])/2.0)
+                dx,dy=sp[0]-sa[0],sp[1]-sa[1]; r["SS_deg"]=abs(math.degrees(math.atan2(dy,dx)))
+                vx,vy=s[0]-fh[0],s[1]-fh[1]; r["PT_deg"]=abs(math.degrees(math.atan2(vx,vy)))
+                nx,ny=-dy,dx; hx,hy=fh[0]-s[0],fh[1]-s[1]; r["PI_deg"]=abs(math.degrees(math.atan2(nx*hy-ny*hx,nx*hx+ny*hy)))
+            results[key]=r
+        dyn={}
+        for name in set(results.get("flex",{})).intersection(results.get("ext",{})):
+            if name.endswith("_deg"): dyn["delta_"+name]=abs(results["flex"][name]-results["ext"][name])
+        results["dynamic"]=dyn; self.lastResults=results
+        lines=[]
+        for section,data in results.items():
+            lines.append("["+section.upper()+"]"); lines.extend("%s = %.2f" % (name,value) for name,value in data.items()); lines.append("")
+        self.resultsText.plainText="\\n".join(lines) if lines else ("No hay landmarks suficientes." if self.lang=="es" else "Insufficient landmarks.")
+
+    def copyResults(self):
+        if not self.lastResults: self.calculateMeasurements()
+        qt.QApplication.clipboard().setText(json.dumps(self.lastResults,indent=2,ensure_ascii=False))
+
+    def generateFigure(self):
+        if not self.lastResults: self.calculateMeasurements()
+        key="lat" if "lat" in self.markupNodes else self.activeProjection
+        if not key or key not in self.markupNodes: slicer.util.errorDisplay("No hay una proyección registrada."); return
+        volume=self.selectors[key].currentNode()
+        if volume: slicer.util.setSliceViewerLayers(background=volume,fit=True)
+        for projection,node in self.markupNodes.items():
+            if node.GetDisplayNode(): node.GetDisplayNode().SetVisibility(projection==key)
+        path=qt.QFileDialog.getSaveFileName(slicer.util.mainWindow(),"Guardar imagen / Save image","","PNG (*.png)")
+        if not path: return
+        if not path.lower().endswith(".png"): path+=".png"
+        widget=slicer.app.layoutManager().sliceWidget("Red")
+        if widget: widget.grab().save(path,"PNG")
+
 class LumbarRadiographyLogic(ScriptedLoadableModuleLogic):
     DEFINITION_VERSION="1.2.0"
     def createLandmarkNode(self,name):
