@@ -8,7 +8,9 @@ TRANSLATIONS = {
     "es": {
         "study":"Estudio radiográfico", "language":"Idioma", "ap":"AP", "lat":"Lateral neutra",
         "flex":"Flexión", "ext":"Extensión", "select":"Seleccionar volumen",
-        "landmarks":"Registro manual de landmarks", "start":"Iniciar registro",\n        "importDicom":"Importar DICOM", "categorize":"Categorizar", "validate":"Validar estudio",\n        "validation":"Importación, categorización y validación", "assigned":"Asignada", "missing":"Faltante",
+        "landmarks":"Registro manual de landmarks", "start":"Iniciar registro",
+        "importDicom":"Importar DICOM", "categorize":"Categorizar", "validate":"Validar estudio",
+        "validation":"Importación, categorización y validación", "assigned":"Asignada", "missing":"Faltante",
         "place":"Marcar punto", "skip":"Saltar", "finish":"Finalizar",
         "current":"Punto actual", "progress":"Progreso", "instructions":"Instrucciones",
         "noVolume":"Seleccione un volumen para esta proyección.",
@@ -19,7 +21,9 @@ TRANSLATIONS = {
     "en": {
         "study":"Radiographic study", "language":"Language", "ap":"AP", "lat":"Neutral lateral",
         "flex":"Flexion", "ext":"Extension", "select":"Select volume",
-        "landmarks":"Manual landmark registration", "start":"Start registration",\n        "importDicom":"Import DICOM", "categorize":"Categorize", "validate":"Validate study",\n        "validation":"Import, categorization and validation", "assigned":"Assigned", "missing":"Missing",
+        "landmarks":"Manual landmark registration", "start":"Start registration",
+        "importDicom":"Import DICOM", "categorize":"Categorize", "validate":"Validate study",
+        "validation":"Import, categorization and validation", "assigned":"Assigned", "missing":"Missing",
         "place":"Place point", "skip":"Skip", "finish":"Finish",
         "current":"Current landmark", "progress":"Progress", "instructions":"Instructions",
         "noVolume":"Select a volume for this projection.",
@@ -96,7 +100,8 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.lang=self.languageCombo.itemData(self.languageCombo.currentIndex); self.applyLanguage(); self.updateGuide()
 
     def applyLanguage(self):
-        self.studyBox.title=self.tr("study"); self.landmarkBox.title=self.tr("landmarks"); self.validationBox.title=self.tr("validation")\n        self.importButton.text=self.tr("importDicom"); self.categorizeButton.text=self.tr("categorize"); self.validateButton.text=self.tr("validate")
+        self.studyBox.title=self.tr("study"); self.landmarkBox.title=self.tr("landmarks"); self.validationBox.title=self.tr("validation")
+        self.importButton.text=self.tr("importDicom"); self.categorizeButton.text=self.tr("categorize"); self.validateButton.text=self.tr("validate")
         for key in self.PROJECTION_KEYS:
             getattr(self,key+"Label").text=self.tr(key)
             getattr(self,key+"StartButton").text=self.tr("start")
@@ -138,7 +143,9 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         interaction=slicer.app.applicationLogic().GetInteractionNode(); interaction.SetPlaceModePersistence(0); interaction.SetCurrentInteractionMode(interaction.Place)
         node.SetAttribute("ONeSpineRx.PendingLandmark",label)
         self.currentLabel.text=f"{self.tr('current')}: {label}"
-        self.helpLabel.text=self.helpFor(label)+"\n\n"+("Haga clic sobre la radiografía. Después continúe con el siguiente punto." if self.lang=="es" else "Click on the radiograph, then continue with the next point.")
+        self.helpLabel.text=self.helpFor(label)+"
+
+"+("Haga clic sobre la radiografía. Después continúe con el siguiente punto." if self.lang=="es" else "Click on the radiograph, then continue with the next point.")
         # Advancement is explicit to keep Slicer 5.2 behavior predictable.
         self.indices[key]=i+1
         self.updateGuide()
