@@ -104,7 +104,10 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.helpLabel=qt.QLabel(); self.helpLabel.wordWrap=True
         self.progressLabel=qt.QLabel(); v.addWidget(self.currentLabel); v.addWidget(self.helpLabel); v.addWidget(self.progressLabel)
         buttons=qt.QHBoxLayout(); self.placeButton=qt.QPushButton(); self.skipButton=qt.QPushButton(); self.finishButton=qt.QPushButton()
-        for b in (self.skipButton,self.finishButton): buttons.addWidget(b); b.enabled=False\n        self.placeButton.visible=False
+        for b in (self.skipButton,self.finishButton):
+            buttons.addWidget(b)
+            b.enabled=False
+        self.placeButton.visible=False
         v.addLayout(buttons); self.layout.addWidget(self.landmarkBox)
         self.calibrationLabel=qt.QLabel(); self.calibrationLabel.wordWrap=True; self.layout.addWidget(self.calibrationLabel)
         self.placeButton.connect("clicked()",self.placeCurrent); self.skipButton.connect("clicked()",self.skipCurrent); self.finishButton.connect("clicked()",self.finishRegistration)
