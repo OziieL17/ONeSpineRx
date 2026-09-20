@@ -1,0 +1,85 @@
+{
+  "schema_version": "1.0.0",
+  "definition_version": "1.0.0",
+  "segments": [
+    "L1-L2",
+    "L2-L3",
+    "L3-L4",
+    "L4-L5",
+    "L5-S1"
+  ],
+  "measurements": [
+    {
+      "id": "SEG_ANGLE",
+      "scope": "segment",
+      "unit": "deg",
+      "calibration_required": false
+    },
+    {
+      "id": "DISC_HEIGHT_ANT",
+      "scope": "segment",
+      "unit": "mm",
+      "calibration_required": true
+    },
+    {
+      "id": "DISC_HEIGHT_POST",
+      "scope": "segment",
+      "unit": "mm",
+      "calibration_required": true
+    },
+    {
+      "id": "DISC_HEIGHT_MID",
+      "scope": "segment",
+      "unit": "mm",
+      "calibration_required": true
+    },
+    {
+      "id": "DISC_WEDGE",
+      "scope": "segment",
+      "unit": "deg",
+      "calibration_required": false
+    },
+    {
+      "id": "SAG_TRANSLATION_MM",
+      "scope": "segment",
+      "unit": "mm",
+      "calibration_required": true
+    },
+    {
+      "id": "SAG_TRANSLATION_PCT",
+      "scope": "segment",
+      "unit": "percent",
+      "calibration_required": false
+    },
+    {
+      "id": "LL_L1_S1",
+      "scope": "region",
+      "unit": "deg",
+      "calibration_required": false
+    },
+    {
+      "id": "LL_L4_S1",
+      "scope": "region",
+      "unit": "deg",
+      "calibration_required": false
+    },
+    {
+      "id": "SS",
+      "scope": "region",
+      "unit": "deg",
+      "calibration_required": false
+    },
+    {
+      "id": "DYN_TRANSLATION",
+      "scope": "dynamic_segment",
+      "unit": "mm",
+      "calibration_required": true
+    },
+    {
+      "id": "DYN_ANGLE",
+      "scope": "dynamic_segment",
+      "unit": "deg",
+      "calibration_required": false
+    }
+  ]
+}
