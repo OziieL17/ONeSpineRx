@@ -8,7 +8,7 @@ TRANSLATIONS = {
     "es": {
         "study":"Estudio radiográfico", "language":"Idioma", "ap":"AP", "lat":"Lateral neutra",
         "flex":"Flexión", "ext":"Extensión", "select":"Seleccionar volumen",
-        "landmarks":"Registro manual de landmarks", "start":"Iniciar registro",
+        "landmarks":"Registro manual de landmarks", "start":"Iniciar registro",\n        "importDicom":"Importar DICOM", "categorize":"Categorizar", "validate":"Validar estudio",\n        "validation":"Importación, categorización y validación", "assigned":"Asignada", "missing":"Faltante",
         "place":"Marcar punto", "skip":"Saltar", "finish":"Finalizar",
         "current":"Punto actual", "progress":"Progreso", "instructions":"Instrucciones",
         "noVolume":"Seleccione un volumen para esta proyección.",
@@ -19,7 +19,7 @@ TRANSLATIONS = {
     "en": {
         "study":"Radiographic study", "language":"Language", "ap":"AP", "lat":"Neutral lateral",
         "flex":"Flexion", "ext":"Extension", "select":"Select volume",
-        "landmarks":"Manual landmark registration", "start":"Start registration",
+        "landmarks":"Manual landmark registration", "start":"Start registration",\n        "importDicom":"Import DICOM", "categorize":"Categorize", "validate":"Validate study",\n        "validation":"Import, categorization and validation", "assigned":"Assigned", "missing":"Missing",
         "place":"Place point", "skip":"Skip", "finish":"Finish",
         "current":"Current landmark", "progress":"Progress", "instructions":"Instructions",
         "noVolume":"Select a volume for this projection.",
@@ -96,7 +96,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.lang=self.languageCombo.itemData(self.languageCombo.currentIndex); self.applyLanguage(); self.updateGuide()
 
     def applyLanguage(self):
-        self.studyBox.title=self.tr("study"); self.landmarkBox.title=self.tr("landmarks")
+        self.studyBox.title=self.tr("study"); self.landmarkBox.title=self.tr("landmarks"); self.validationBox.title=self.tr("validation")\n        self.importButton.text=self.tr("importDicom"); self.categorizeButton.text=self.tr("categorize"); self.validateButton.text=self.tr("validate")
         for key in self.PROJECTION_KEYS:
             getattr(self,key+"Label").text=self.tr(key)
             getattr(self,key+"StartButton").text=self.tr("start")
