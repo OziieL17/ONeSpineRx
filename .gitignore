@@ -1,0 +1,11 @@
+# 3D Slicer / Python
+__pycache__/
+*.py[cod]
+*.pyo
+.DS_Store
+.vscode/
+.idea/
+Testing/
+CMakeCache.txt
+CMakeFiles/
+cmake-build-*/
