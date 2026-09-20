@@ -78,15 +78,33 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         for row,key in enumerate(self.PROJECTION_KEYS):
             label=qt.QLabel(); selector=slicer.qMRMLNodeComboBox(); selector.nodeTypes=["vtkMRMLScalarVolumeNode"]; selector.noneEnabled=True; selector.addEnabled=False; selector.removeEnabled=False; selector.setMRMLScene(slicer.mrmlScene)
             self.selectors[key]=selector; setattr(self,key+"Label",label); grid.addWidget(label,row,0); grid.addWidget(selector,row,1)
-            b=qt.QPushButton(); setattr(self,key+"StartButton",b); b.connect("clicked()",lambda k=key:self.startRegistration(k)); grid.addWidget(b,row,2)
+            b=qt.QPushButton(); b.minimumWidth=110; setattr(self,key+"StartButton",b); b.connect("clicked()",lambda k=key:self.startRegistration(k)); grid.addWidget(b,row,2)
         self.layout.addWidget(self.studyBox)
+
+        self.validationBox=qt.QGroupBox()
+        validationLayout=qt.QVBoxLayout(self.validationBox)
+        validationButtons=qt.QHBoxLayout()
+        self.importButton=qt.QPushButton()
+        self.categorizeButton=qt.QPushButton()
+        self.validateButton=qt.QPushButton()
+        validationButtons.addWidget(self.importButton)
+        validationButtons.addWidget(self.categorizeButton)
+        validationButtons.addWidget(self.validateButton)
+        validationLayout.addLayout(validationButtons)
+        self.validationText=qt.QLabel()
+        self.validationText.wordWrap=True
+        validationLayout.addWidget(self.validationText)
+        self.layout.addWidget(self.validationBox)
+        self.importButton.connect("clicked()",self.importDicom)
+        self.categorizeButton.connect("clicked()",self.categorizeLoadedVolumes)
+        self.validateButton.connect("clicked()",self.validateStudy)
 
         self.landmarkBox=qt.QGroupBox(); v=qt.QVBoxLayout(self.landmarkBox)
         self.currentLabel=qt.QLabel(); self.currentLabel.setStyleSheet("font-weight: bold; font-size: 16px;")
         self.helpLabel=qt.QLabel(); self.helpLabel.wordWrap=True
         self.progressLabel=qt.QLabel(); v.addWidget(self.currentLabel); v.addWidget(self.helpLabel); v.addWidget(self.progressLabel)
         buttons=qt.QHBoxLayout(); self.placeButton=qt.QPushButton(); self.skipButton=qt.QPushButton(); self.finishButton=qt.QPushButton()
-        for b in (self.placeButton,self.skipButton,self.finishButton): buttons.addWidget(b); b.enabled=False
+        for b in (self.skipButton,self.finishButton): buttons.addWidget(b); b.enabled=False\n        self.placeButton.visible=False
         v.addLayout(buttons); self.layout.addWidget(self.landmarkBox)
         self.calibrationLabel=qt.QLabel(); self.calibrationLabel.wordWrap=True; self.layout.addWidget(self.calibrationLabel)
         self.placeButton.connect("clicked()",self.placeCurrent); self.skipButton.connect("clicked()",self.skipCurrent); self.finishButton.connect("clicked()",self.finishRegistration)
@@ -105,11 +123,62 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         for key in self.PROJECTION_KEYS:
             getattr(self,key+"Label").text=self.tr(key)
             getattr(self,key+"StartButton").text=self.tr("start")
-        self.placeButton.text=self.tr("place"); self.skipButton.text=self.tr("skip"); self.finishButton.text=self.tr("finish")
+        self.skipButton.text=self.tr("skip"); self.finishButton.text=self.tr("finish")
         self.calibrationLabel.text=self.tr("calibration")
         if self.activeProjection is None: self.currentLabel.text=self.tr("ready"); self.helpLabel.text=""; self.progressLabel.text=""
 
     def labels(self,key): return self.AP_LABELS if key=="ap" else self.LATERAL_LABELS
+
+    def importDicom(self):
+        slicer.util.selectModule("DICOM")
+        self.validationText.text=("Importe/cargue el estudio con el navegador DICOM de Slicer y regrese a ONeSpineRx para categorizarlo." if self.lang=="es" else "Import/load the study with Slicer's DICOM browser, then return to ONeSpineRx to categorize it.")
+
+    def categorizeLoadedVolumes(self):
+        volumes=list(slicer.util.getNodesByClass("vtkMRMLScalarVolumeNode"))
+        available=[v for v in volumes if v is not None]
+        rules={
+            "flex":("flex","flexion","flexión"),
+            "ext":("ext","extension","extensión"),
+            "ap":(" ap","ap ","anteroposterior"),
+            "lat":("lat","lateral"),
+        }
+        for key in ("flex","ext","ap","lat"):
+            if self.selectors[key].currentNode() is not None:
+                continue
+            for volume in list(available):
+                name=(" "+volume.GetName()+" ").lower()
+                if any(token in name for token in rules[key]):
+                    self.selectors[key].setCurrentNode(volume)
+                    available.remove(volume)
+                    break
+        self.validateStudy()
+
+    def validateStudy(self):
+        lines=[]
+        complete=True
+        for key in self.PROJECTION_KEYS:
+            volume=self.selectors[key].currentNode()
+            if volume is None:
+                lines.append("✗ "+self.tr(key)+": "+self.tr("missing"))
+                complete=False
+                continue
+            imageData=volume.GetImageData()
+            dims=imageData.GetDimensions() if imageData else (0,0,0)
+            spacing=volume.GetSpacing()
+            spacingValid=bool(spacing and spacing[0]>0 and spacing[1]>0)
+            detail=self.tr("assigned")+" — "+str(dims[0])+"×"+str(dims[1])
+            if spacingValid:
+                detail+=" — spacing %.4f × %.4f mm" % (spacing[0],spacing[1])
+            else:
+                detail+=" — "+("sin spacing espacial válido" if self.lang=="es" else "no valid spatial spacing")
+                complete=False
+            lines.append(("✓ " if spacingValid else "⚠ ")+self.tr(key)+": "+detail)
+        lines.append("")
+        if self.lang=="es":
+            lines.append("Estado: "+("cuatro proyecciones asignadas; falta validar el origen de la calibración en mm." if complete else "estudio incompleto o requiere revisión/calibración."))
+        else:
+            lines.append("Status: "+("four projections assigned; millimetric calibration provenance still requires validation." if complete else "incomplete study or calibration/review required."))
+        self.validationText.text="\n".join(lines)
 
     def startRegistration(self,key):
         volume=self.selectors[key].currentNode()
