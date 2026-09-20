@@ -60,8 +60,11 @@ class LumbarRadiography(ScriptedLoadableModule):
 
 class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin):
     PROJECTION_KEYS = ["ap","lat","flex","ext"]
-    LATERAL_LABELS = [f"{v}_{c}" for v in ("L1","L2","L3","L4","L5") for c in ("AS","PS","AI","PI")] + ["S1_AS","S1_PS"]
-    AP_LABELS = [f"{v}_{c}" for v in ("L1","L2","L3","L4","L5") for c in ("SL","SR","IL","IR")] + ["S1_L","S1_R"]
+    SAGITTAL_POINTS = [f"{v} {p}" for v in ("L1","L2","L3","L4","L5") for p in ("SA","SP","IA","IP")] + ["S1 SA","S1 SP"]
+    LAT_POINTS = SAGITTAL_POINTS + ["FH_R_CENTER","FH_L_CENTER"]
+    AP_POINTS = [f"{v} {p}" for v in ("L1","L2","L3","L4","L5") for p in ("SL","SR","IL","IR")] + ["S1 L","S1 R"]
+    PREFIX = {"ap":"AP","lat":"LAT","flex":"FLEX","ext":"EXT"}
+    COLORS = {"ap":(0.20,0.85,0.35),"lat":(0.95,0.35,0.70),"flex":(0.20,0.70,0.85),"ext":(1.00,0.70,0.10)}
 
     def __init__(self, parent=None):
         ScriptedLoadableModuleWidget.__init__(self,parent)
