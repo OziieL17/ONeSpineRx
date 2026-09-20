@@ -17,7 +17,7 @@ TRANSLATIONS = {
         "noVolume":"Seleccione un volumen para esta proyección.",
         "ready":"Seleccione las cuatro proyecciones y pulse Iniciar registro en la proyección que desea medir.",
         "complete":"Registro finalizado. Revise los puntos antes de calcular o exportar.", "results":"Resultados", "calculate":"Calcular medidas", "copy":"Copiar valores", "figure":"Generar imagen",
-        "skipped":"Omitido", "calibration":"Las distancias en mm requieren calibración espacial válida.",
+        "skipped":"Omitido", "calibration":"Calibración milimétrica por proyección", "calibrate":"Calibrar", "knownLength":"Longitud conocida (mm)",
     },
     "en": {
         "study":"Radiographic study", "language":"Language", "ap":"AP", "lat":"Neutral lateral",
@@ -30,7 +30,7 @@ TRANSLATIONS = {
         "noVolume":"Select a volume for this projection.",
         "ready":"Select all four projections and press Start registration on the projection you want to measure.",
         "complete":"Registration finished. Review landmarks before calculation or export.", "results":"Results", "calculate":"Calculate measurements", "copy":"Copy values", "figure":"Generate image",
-        "skipped":"Skipped", "calibration":"Distances in mm require valid spatial calibration.",
+        "skipped":"Skipped", "calibration":"Millimetric calibration by projection", "calibrate":"Calibrate", "knownLength":"Known length (mm)",
     },
 }
 
@@ -113,7 +113,14 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         for b in (self.previousButton,self.nextButton,self.skipButton,self.editButton,self.saveButton,self.finishButton):
             buttons.addWidget(b); b.enabled=False
         v.addLayout(buttons); self.layout.addWidget(self.landmarkBox)
-        self.calibrationLabel=qt.QLabel(); self.calibrationLabel.wordWrap=True; self.layout.addWidget(self.calibrationLabel)
+        self.calibrationBox=qt.QGroupBox(); cal=qt.QGridLayout(self.calibrationBox)
+        self.calibrationProjection=qt.QComboBox()
+        for key in self.PROJECTION_KEYS: self.calibrationProjection.addItem(self.tr(key),key)
+        self.knownLengthSpin=qt.QDoubleSpinBox(); self.knownLengthSpin.minimum=0.1; self.knownLengthSpin.maximum=1000.0; self.knownLengthSpin.value=25.0; self.knownLengthSpin.suffix=" mm"
+        self.calibrateButton=qt.QPushButton(); self.calibrationStatus=qt.QLabel(); self.calibrationStatus.wordWrap=True
+        cal.addWidget(self.calibrationProjection,0,0); cal.addWidget(self.knownLengthSpin,0,1); cal.addWidget(self.calibrateButton,0,2); cal.addWidget(self.calibrationStatus,1,0,1,3)
+        self.layout.addWidget(self.calibrationBox); self.calibrations={}; self.pendingCalibration=None; self.calibrationObserverTag=None
+        self.calibrateButton.connect("clicked()",self.startCalibration)
         self.resultsBox=qt.QGroupBox(); resultsLayout=qt.QVBoxLayout(self.resultsBox)
         resultButtons=qt.QHBoxLayout(); self.calculateButton=qt.QPushButton(); self.copyButton=qt.QPushButton(); self.figureButton=qt.QPushButton()
         resultButtons.addWidget(self.calculateButton); resultButtons.addWidget(self.copyButton); resultButtons.addWidget(self.figureButton); resultsLayout.addLayout(resultButtons)
@@ -131,13 +138,13 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.lang=self.languageCombo.itemData(self.languageCombo.currentIndex); self.applyLanguage(); self.updateGuide()
 
     def applyLanguage(self):
-        self.studyBox.title=self.tr("study"); self.landmarkBox.title=self.tr("landmarks"); self.validationBox.title=self.tr("validation"); self.resultsBox.title=self.tr("results")
+        self.studyBox.title=self.tr("study"); self.landmarkBox.title=self.tr("landmarks"); self.validationBox.title=self.tr("validation"); self.resultsBox.title=self.tr("results"); self.calibrationBox.title=self.tr("calibration")
         self.importButton.text=self.tr("importDicom"); self.categorizeButton.text=self.tr("categorize"); self.validateButton.text=self.tr("validate")
         for key in self.PROJECTION_KEYS:
             getattr(self,key+"Label").text=self.tr(key)
             getattr(self,key+"StartButton").text=self.tr("start")
         self.previousButton.text=self.tr("previous"); self.nextButton.text=self.tr("next"); self.skipButton.text=self.tr("skip"); self.editButton.text=self.tr("edit"); self.saveButton.text=self.tr("save"); self.finishButton.text=self.tr("finish")
-        self.calibrationLabel.text=self.tr("calibration"); self.calculateButton.text=self.tr("calculate"); self.copyButton.text=self.tr("copy"); self.figureButton.text=self.tr("figure")
+        self.calibrateButton.text=self.tr("calibrate"); self.calculateButton.text=self.tr("calculate"); self.copyButton.text=self.tr("copy"); self.figureButton.text=self.tr("figure")
         if self.activeProjection is None: self.currentLabel.text=self.tr("ready"); self.helpLabel.text=""; self.progressLabel.text=""
 
     def labels(self,key):
@@ -196,6 +203,34 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             lines.append("Status: "+("four projections assigned; millimetric calibration provenance still requires validation." if complete else "incomplete study or calibration/review required."))
         self.validationText.text="\n".join(lines)
 
+    def startCalibration(self):
+        key=self.calibrationProjection.itemData(self.calibrationProjection.currentIndex)
+        volume=self.selectors[key].currentNode()
+        if volume is None: slicer.util.errorDisplay(self.tr("noVolume")); return
+        slicer.util.setSliceViewerLayers(background=volume,fit=True)
+        node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsLineNode","ONeSpineRx_CAL_"+self.PREFIX[key])
+        node.SetAttribute("ONeSpineRx.CalibrationProjection",key); self.pendingCalibration=node
+        self.calibrationObserverTag=node.AddObserver(slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent,self.onCalibrationPoint)
+        slicer.mrmlScene.SetActiveMRMLNodeID(node.GetID()); interaction=slicer.app.applicationLogic().GetInteractionNode(); interaction.SetPlaceModePersistence(1); interaction.SetCurrentInteractionMode(interaction.Place)
+        self.calibrationStatus.text=("Marque los dos extremos de una referencia de %.1f mm en %s." if self.lang=="es" else "Mark both ends of a %.1f mm reference on %s.") % (self.knownLengthSpin.value,self.PREFIX[key])
+
+    def onCalibrationPoint(self,caller,event):
+        if caller is not self.pendingCalibration or caller.GetNumberOfControlPoints()<2: return
+        key=caller.GetAttribute("ONeSpineRx.CalibrationProjection"); a=[0.0,0.0,0.0]; b=[0.0,0.0,0.0]
+        caller.GetNthControlPointPositionWorld(0,a); caller.GetNthControlPointPositionWorld(1,b)
+        import math
+        measured=math.hypot(b[0]-a[0],b[1]-a[1]); known=float(self.knownLengthSpin.value)
+        if measured<=0: return
+        factor=known/measured; self.calibrations[key]={"method":"manual_two_point","known_mm":known,"measured_scene_units":measured,"factor_mm_per_scene_unit":factor,"verified":True}
+        caller.SetAttribute("ONeSpineRx.KnownLengthMM",str(known)); caller.SetAttribute("ONeSpineRx.CalibrationFactor",str(factor))
+        caller.RemoveObserver(self.calibrationObserverTag); self.calibrationObserverTag=None
+        interaction=slicer.app.applicationLogic().GetInteractionNode(); interaction.SetCurrentInteractionMode(interaction.ViewTransform)
+        self.calibrationStatus.text=("✓ %s calibrada: %.6f mm/unidad." if self.lang=="es" else "✓ %s calibrated: %.6f mm/unit.") % (self.PREFIX[key],factor)
+        self.pendingCalibration=None
+
+    def calibrationFactor(self,key):
+        item=self.calibrations.get(key)
+        return item["factor_mm_per_scene_unit"] if item and item.get("verified") else None
     def startRegistration(self,key):
         volume=self.selectors[key].currentNode()
         if volume is None:
@@ -212,7 +247,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             color=self.COLORS[key]
             node.GetDisplayNode().SetSelectedColor(*color)
             node.GetDisplayNode().SetColor(*color)
-            node.GetDisplayNode().SetTextScale(0.7)
+            node.GetDisplayNode().SetTextScale(1.05)
             self.markupNodes[key]=node
             tag=node.AddObserver(slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent,self.onPointDefined)
             self.markupObserverTags[key]=tag
@@ -340,6 +375,11 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
                     # Lan et al. 2019: IHI=(anterior height + posterior height)/(superior width + inferior width)*100.
                     den=dist(ua,up)+dist(la,lp)
                     if den>0: r["IHI_"+upper+"_"+lower+"_pct"]=100.0*(dist(ua,la)+dist(up,lp))/den
+                    factor=self.calibrationFactor(key)
+                    if factor:
+                        r["DH_"+upper+"_"+lower+"_anterior_mm"]=dist(ua,la)*factor
+                        r["DH_"+upper+"_"+lower+"_posterior_mm"]=dist(up,lp)*factor
+                        r["DH_"+upper+"_"+lower+"_mean_mm"]=0.5*(dist(ua,la)+dist(up,lp))*factor
             if key=="lat" and all(q(x) for x in ("S1 SA","S1 SP","FH_R_CENTER","FH_L_CENTER")):
                 import math
                 sa,sp=q("S1 SA"),q("S1 SP"); sm=((sa[0]+sp[0])/2.0,(sa[1]+sp[1])/2.0)
