@@ -1,0 +1,48 @@
+{
+  "schema_version": "1.0.0",
+  "definition_version": "1.0.0",
+  "projections": {
+    "LATERAL": {
+      "vertebrae": [
+        "L1",
+        "L2",
+        "L3",
+        "L4",
+        "L5"
+      ],
+      "points": [
+        "AS",
+        "PS",
+        "AI",
+        "PI"
+      ],
+      "s1": [
+        "S1_AS",
+        "S1_PS"
+      ],
+      "optional": [
+        "FH_R",
+        "FH_L"
+      ]
+    },
+    "AP": {
+      "vertebrae": [
+        "L1",
+        "L2",
+        "L3",
+        "L4",
+        "L5"
+      ],
+      "points": [
+        "SL",
+        "SR",
+        "IL",
+        "IR"
+      ],
+      "s1": [
+        "S1_L",
+        "S1_R"
+      ]
+    }
+  }
+}
