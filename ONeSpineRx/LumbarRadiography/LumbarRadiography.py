@@ -143,9 +143,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         interaction=slicer.app.applicationLogic().GetInteractionNode(); interaction.SetPlaceModePersistence(0); interaction.SetCurrentInteractionMode(interaction.Place)
         node.SetAttribute("ONeSpineRx.PendingLandmark",label)
         self.currentLabel.text=f"{self.tr('current')}: {label}"
-        self.helpLabel.text=self.helpFor(label)+"
-
-"+("Haga clic sobre la radiografía. Después continúe con el siguiente punto." if self.lang=="es" else "Click on the radiograph, then continue with the next point.")
+        self.helpLabel.text=self.helpFor(label)+"\\n\\n"+("Haga clic sobre la radiografía. Después continúe con el siguiente punto." if self.lang=="es" else "Click on the radiograph, then continue with the next point.")
         # Advancement is explicit to keep Slicer 5.2 behavior predictable.
         self.indices[key]=i+1
         self.updateGuide()
