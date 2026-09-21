@@ -151,6 +151,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.sameVisualizationCheck=qt.QCheckBox("Usar misma configuración para Neutral/Flexión/Extensión"); self.sameVisualizationCheck.checked=True; vis.addWidget(self.sameVisualizationCheck)
         self.visualizationProjection=qt.QComboBox(); self.visualizationProjection.addItem("NEUTRAL","lat"); self.visualizationProjection.addItem("FLEXION","flex"); self.visualizationProjection.addItem("EXTENSION","ext"); self.visualizationProjection.enabled=False; vis.addWidget(self.visualizationProjection)
         self.sameVisualizationCheck.connect("toggled(bool)",lambda checked:setattr(self.visualizationProjection,"enabled",not checked))
+        self.visualizationProjection.connect("currentIndexChanged(int)",self.loadVisualizationSettingsToUI)
         vis.addWidget(qt.QLabel("Alineación global"))
         self.globalChecks={}
         for name,label in (("LL","Lordosis lumbar L1–S1 (LL)"),("L4_S1","Lordosis distal L4–S1"),("SS","Sacral slope (SS)"),("PI","Pelvic incidence (PI)"),("PT","Pelvic tilt (PT)")):
@@ -428,6 +429,16 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
                 o=self.visualizationSettings[other]; o.__dict__.update({k:(dict(v) if isinstance(v,dict) else v) for k,v in s.__dict__.items()})
         return s
 
+    def loadVisualizationSettingsToUI(self,_index=None):
+        key=self.visualizationKey(); s=self.visualizationSettings.get(key)
+        if not s: return
+        self.globalChecks["LL"].checked=s.show_LL; self.globalChecks["L4_S1"].checked=s.show_L4_S1; self.globalChecks["SS"].checked=s.show_SS; self.globalChecks["PI"].checked=s.show_PI; self.globalChecks["PT"].checked=s.show_PT
+        for level,cb in self.ivaChecks.items(): cb.checked=s.show_IVA.get(level,False)
+        for level,cb in self.translationChecks.items(): cb.checked=s.show_translation.get(level,False)
+        self.discMetricChecks["anterior"].checked=s.show_disc_height_anterior; self.discMetricChecks["posterior"].checked=s.show_disc_height_posterior; self.discMetricChecks["mean"].checked=s.show_disc_height_mean; self.discMetricChecks["IHI"].checked=s.show_IHI
+        for level,cb in self.discLevelChecks.items(): cb.checked=s.disc_levels.get(level,False)
+        self.auxGeometryCheck.checked=s.show_auxiliary_geometry
+        self.updateMeasurementAvailabilityUI()
     def applyVisualizationPreset(self,preset):
         for cb in list(self.globalChecks.values())+list(self.ivaChecks.values())+list(self.translationChecks.values())+list(self.discMetricChecks.values()): cb.checked=False
         if preset=="global":
@@ -601,7 +612,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         qt.QApplication.clipboard().setText(json.dumps(self.lastResults,indent=2,ensure_ascii=False))
 
     def clearMeasurementOverlays(self):
-        for node in list(slicer.util.getNodesByClass("vtkMRMLMarkupsLineNode")):
+        for node in list(slicer.util.getNodesByClass("vtkMRMLMarkupsNode")):
             if node.GetAttribute("ONeSpineRx.MeasurementOverlay")=="1": slicer.mrmlScene.RemoveNode(node)
 
     def addMeasurementLine(self,name,a,b,color=(0.95,0.25,0.15)):
@@ -689,14 +700,27 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.buildMeasurementOverlays(key)
         widget=slicer.app.layoutManager().sliceWidget("Red")
         if not widget: return False
-        return widget.grab().save(path,"PNG")
+        pix=widget.grab(); image=pix.toImage(); painter=qt.QPainter(image); painter.setPen(qt.QColor("white")); font=painter.font(); font.setPointSize(14); font.setBold(True); painter.setFont(font)
+        title={"lat":"NEUTRAL","flex":"FLEXION","ext":"EXTENSION"}[key]; painter.drawText(18,28,title); painter.end(); return image.save(path,"PNG")
 
     def generateDynamicComparison(self,directory):
         import os
         flex=os.path.join(directory,"Flexion_Annotated.png"); ext=os.path.join(directory,"Extension_Annotated.png")
         if not (os.path.exists(flex) and os.path.exists(ext)): return None
-        a=qt.QImage(flex); b=qt.QImage(ext); out=qt.QImage(a.width()+b.width(),max(a.height(),b.height()),qt.QImage.Format_ARGB32); out.fill(qt.QColor("black"))
-        painter=qt.QPainter(out); painter.drawImage(0,0,a); painter.drawImage(a.width(),0,b); painter.end()
+        a=qt.QImage(flex); b=qt.QImage(ext); boxHeight=150; out=qt.QImage(a.width()+b.width(),max(a.height(),b.height())+boxHeight,qt.QImage.Format_ARGB32); out.fill(qt.QColor("black"))
+        painter=qt.QPainter(out); painter.drawImage(0,0,a); painter.drawImage(a.width(),0,b); painter.setPen(qt.QColor("white")); font=painter.font(); font.setPointSize(12); painter.setFont(font)
+        lines=[]; settings=self.readVisualizationSettings("flex")
+        for level in VisualizationSettings.LEVELS:
+            if not (settings.show_IVA.get(level) or settings.show_translation.get(level)): continue
+            parts=[level.replace("_","–")]
+            dk="delta_IVA_"+level+"_deg"; dv=self.lastResults.get("dynamic",{}).get(dk)
+            if settings.show_IVA.get(level) and dv is not None: parts.append("ΔIVA F–E: %.1f°" % dv)
+            t=self.lastResults.get("translation",{}).get(level,{})
+            if settings.show_translation.get(level) and t.get("delta_flex_ext_pct") is not None:
+                if t.get("delta_flex_ext_mm") is not None: parts.append("ΔTranslation F–E: %.1f mm" % t["delta_flex_ext_mm"])
+                parts.append("ΔTranslation F–E: %.1f%%" % t["delta_flex_ext_pct"])
+            lines.append("   ".join(parts))
+        painter.drawText(qt.QRect(20,max(a.height(),b.height())+10,out.width()-40,boxHeight-20),qt.Qt.AlignLeft|qt.Qt.AlignTop,"\n".join(lines)); painter.end()
         path=os.path.join(directory,"Dynamic_Comparison.png"); out.save(path,"PNG"); return path
 
     def generateFigure(self):
@@ -711,7 +735,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.lastResults["visualization"]=self.readVisualizationSettings().toDict() if self.sameVisualizationCheck.checked else {key:self.visualizationSettings[key].toDict() for key in ("lat","flex","ext")}
 
 class LumbarRadiographyLogic(ScriptedLoadableModuleLogic):
-    DEFINITION_VERSION="1.5.0"
+    DEFINITION_VERSION="1.5.1"
     def createLandmarkNode(self,name):
         node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode",name); node.SetDescription("ONeSpineRx manual anatomical landmarks"); return node
     def saveMarkups(self,node,filePath):
