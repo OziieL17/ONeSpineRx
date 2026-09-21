@@ -505,6 +505,41 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         if volume: slicer.util.setSliceViewerLayers(background=volume,fit=True)
         for projection,node in self.markupNodes.items():
             if node.GetDisplayNode(): node.GetDisplayNode().SetVisibility(projection==key)
+    def measurementValidity(self,results):
+        validity={}
+        for key in ("lat","flex","ext"):
+            r=results.get(key,{}); v={}
+            mapping={"LL":"LL_deg","L4_S1":"LL_L4_S1_deg","SS":"SS_deg","PI":"PI_deg","PT":"PT_deg"}
+            for name,resultKey in mapping.items():
+                ok=resultKey in r and r.get(resultKey) is not None
+                reason=None if ok else ("femoral_heads_not_visible" if name in ("PI","PT") else "required_landmarks_unavailable")
+                v[name]={"measurement_valid":ok,"invalid_reason":reason}
+            for level in VisualizationSettings.LEVELS:
+                k="IVA_"+level+"_deg"; ok=k in r and r.get(k) is not None; v["IVA_"+level]={"measurement_valid":ok,"invalid_reason":None if ok else "required_landmarks_unavailable"}
+                for metric,suffix in (("DH_anterior","anterior_mm"),("DH_posterior","posterior_mm"),("DH_mean","mean_mm"),("IHI","IHI")):
+                    rk=("IHI_"+level+"_pct") if metric=="IHI" else ("DH_"+level+"_"+suffix)
+                    ok=rk in r and r.get(rk) is not None
+                    reason=None if ok else ("calibration_unavailable" if metric.startswith("DH") else "required_landmarks_unavailable")
+                    v[metric+"_"+level]={"measurement_valid":ok,"invalid_reason":reason}
+            validity[key]=v
+        return validity
+
+    def pelvicValidity(self):
+        p=self.pointMap("lat"); prefix=self.PREFIX["lat"]; q=lambda name:p.get(prefix+" "+name)
+        if not self.pelvicReliableCheck.checked: return {"pelvic_parameters_valid":False,"pelvic_invalid_reason":"manual_exclusion"}
+        if q("FH_R_CENTER") is None or q("FH_L_CENTER") is None: return {"pelvic_parameters_valid":False,"pelvic_invalid_reason":"femoral_heads_not_visible"}
+        if q("S1 SA") is None or q("S1 SP") is None: return {"pelvic_parameters_valid":False,"pelvic_invalid_reason":"bicoxofemoral_axis_unavailable"}
+        return {"pelvic_parameters_valid":True,"pelvic_invalid_reason":None}
+
+    def updateMeasurementAvailabilityUI(self):
+        if not self.lastResults: return
+        validity=self.lastResults.get("validity",{}).get(self.visualizationKey(),{}); pelvic=self.lastResults.get("pelvic_validity",{})
+        pairs=[(self.globalChecks["LL"],"LL"),(self.globalChecks["L4_S1"],"L4_S1"),(self.globalChecks["SS"],"SS"),(self.globalChecks["PI"],"PI"),(self.globalChecks["PT"],"PT")]
+        for level,cb in self.ivaChecks.items(): pairs.append((cb,"IVA_"+level))
+        for cb,name in pairs:
+            item=validity.get(name,{"measurement_valid":False,"invalid_reason":"not_calculated"}); ok=item.get("measurement_valid",False)
+            if name in ("PI","PT") and not pelvic.get("pelvic_parameters_valid",False): ok=False; item={"invalid_reason":pelvic.get("pelvic_invalid_reason")}
+            cb.enabled=ok; cb.toolTip="" if ok else str(item.get("invalid_reason") or "No disponible")
     def calculateMeasurements(self):
         results={}
         for key in ("lat","flex","ext"):
@@ -542,11 +577,17 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             if name.endswith("_deg"): dyn["delta_"+name]=abs(results["flex"][name]-results["ext"][name])
         results["dynamic"]=dyn
         results["translation"]=self.calculateTranslations()
+        results["validity"]=self.measurementValidity(results)
+        results["pelvic_validity"]=self.pelvicValidity()
+        settings=self.readVisualizationSettings()
+        results["visualization"]=settings.toDict() if self.sameVisualizationCheck.checked else {key:self.visualizationSettings[key].toDict() for key in ("lat","flex","ext")}
         self.lastResults=results
+        self.updateMeasurementAvailabilityUI()
         lines=[]
         for section,data in results.items():
             lines.append("["+section.upper()+"]")
-            if section!="translation": lines.extend("%s = %.2f" % (name,value) for name,value in data.items())
+            if section in ("lat","flex","ext","dynamic"): lines.extend("%s = %.2f" % (name,value) for name,value in data.items())
+            elif section in ("validity","pelvic_validity","visualization"): lines.append(json.dumps(data,ensure_ascii=False))
             else:
                 for level,item in data.items(): lines.append("%s: neutral=%s%% flex=%s%% ext=%s%% delta=%s%%" % (level, self.fmt(item.get("neutral_pct")), self.fmt(item.get("flex_pct")), self.fmt(item.get("ext_pct")), self.fmt(item.get("delta_flex_ext_pct"))))
             lines.append("")
@@ -570,41 +611,107 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         d=node.GetDisplayNode(); d.SetSelectedColor(*color); d.SetColor(*color); d.SetLineThickness(0.35); d.SetTextScale(1.15); d.SetPointLabelsVisibility(False)
         return node
 
-    def buildMeasurementOverlays(self,key):
-        self.clearMeasurementOverlays(); p=self.pointMap(key); prefix=self.PREFIX[key]; q=lambda name: p.get(prefix+" "+name)
-        # Endplate traces used for LL, IVA, SS and IHI.
-        for level in ("L1","L2","L3","L4","L5"):
-            if q(level+" SA") and q(level+" SP"): self.addMeasurementLine(level+"_SUP",q(level+" SA"),q(level+" SP"))
-            if q(level+" IA") and q(level+" IP"): self.addMeasurementLine(level+"_INF",q(level+" IA"),q(level+" IP"))
-        if q("S1 SA") and q("S1 SP"): self.addMeasurementLine("S1_SUP",q("S1 SA"),q("S1 SP"))
-        # Disc-height traces reproduce the anterior/posterior components of IHI.
-        for upper,lower in zip(("L1","L2","L3","L4","L5"),("L2","L3","L4","L5","S1")):
-            if q(upper+" IA") and q(lower+" SA"): self.addMeasurementLine("IHI_"+upper+"_"+lower+"_ANT",q(upper+" IA"),q(lower+" SA"),(0.15,0.75,0.95))
-            if q(upper+" IP") and q(lower+" SP"): self.addMeasurementLine("IHI_"+upper+"_"+lower+"_POST",q(upper+" IP"),q(lower+" SP"),(0.15,0.75,0.95))
-        # Spinopelvic construction on neutral lateral.
-        if key=="lat" and q("FH_R_CENTER") and q("FH_L_CENTER") and q("S1 SA") and q("S1 SP"):
-            fr,fl=q("FH_R_CENTER"),q("FH_L_CENTER"); fh=[(fr[i]+fl[i])/2.0 for i in range(3)]
-            sa,sp=q("S1 SA"),q("S1 SP"); sm=[(sa[i]+sp[i])/2.0 for i in range(3)]
-            self.addMeasurementLine("HIP_AXIS_TO_S1",fh,sm,(0.85,0.55,0.10))
-        return True
+    def addMeasurementLabel(self,name,point,text,color=(1.0,1.0,1.0)):
+        node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode","ONeSpineRx_LABEL_"+name); node.SetAttribute("ONeSpineRx.MeasurementOverlay","1")
+        node.AddControlPointWorld(vtk.vtkVector3d(point[0],point[1],point[2])); node.SetNthControlPointLabel(0,text)
+        d=node.GetDisplayNode(); d.SetSelectedColor(*color); d.SetColor(*color); d.SetTextScale(1.25); d.SetGlyphScale(0.0)
+        return node
 
-    def generateFigure(self):
+    def labelPoint(self,anchor,occupied):
+        offsets=((0,8),(8,8),(-8,8),(10,0),(-10,0),(0,-8),(10,-8),(-10,-8),(0,16))
+        for ox,oy in offsets:
+            p=[anchor[0]+ox,anchor[1]+oy,anchor[2]]
+            if all((p[0]-q[0])**2+(p[1]-q[1])**2>100.0 for q in occupied): occupied.append(p); return p
+        p=[anchor[0],anchor[1]+24,anchor[2]]; occupied.append(p); return p
+
+    def addAngleArc(self,name,a,b,c,d,value,occupied):
+        import math
+        m1=[(a[i]+b[i])/2.0 for i in range(3)]; m2=[(c[i]+d[i])/2.0 for i in range(3)]; center=[(m1[i]+m2[i])/2.0 for i in range(3)]
+        u=[b[0]-a[0],b[1]-a[1]]; v=[d[0]-c[0],d[1]-c[1]]; au=math.atan2(u[1],u[0]); av=math.atan2(v[1],v[0])
+        diff=(av-au+math.pi)%(2*math.pi)-math.pi
+        if abs(diff)>math.pi/2: diff=diff-math.copysign(math.pi,diff)
+        radius=max(6.0,min(16.0,0.18*(math.hypot(u[0],u[1])+math.hypot(v[0],v[1]))))
+        curve=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsCurveNode","ONeSpineRx_ARC_"+name); curve.SetAttribute("ONeSpineRx.MeasurementOverlay","1")
+        for i in range(13):
+            t=au+diff*i/12.0; curve.AddControlPointWorld(vtk.vtkVector3d(center[0]+radius*math.cos(t),center[1]+radius*math.sin(t),center[2]))
+        dd=curve.GetDisplayNode(); dd.SetSelectedColor(0.95,0.25,0.15); dd.SetColor(0.95,0.25,0.15); dd.SetPointLabelsVisibility(False); dd.SetGlyphScale(0.0)
+        lp=self.labelPoint([center[0]+radius,center[1]+radius,center[2]],occupied); self.addMeasurementLabel(name,lp,"%s\n%.1f°" % (name.replace("_","–"),value))
+
+    def buildMeasurementOverlays(self,key):
+        self.clearMeasurementOverlays()
+        if key not in ("lat","flex","ext"): return False
         if not self.lastResults: self.calculateMeasurements()
-        key="lat" if "lat" in self.markupNodes else self.activeProjection
-        if not key or key not in self.markupNodes: slicer.util.errorDisplay("No hay una proyección registrada."); return
+        s=self.readVisualizationSettings(key); r=self.lastResults.get(key,{}); validity=self.lastResults.get("validity",{}).get(key,{})
+        p=self.pointMap(key); prefix=self.PREFIX[key]; q=lambda name:p.get(prefix+" "+name); occupied=[]
+        def valid(name): return validity.get(name,{}).get("measurement_valid",False)
+        def line(name,a,b,color=(0.95,0.25,0.15)):
+            if a is not None and b is not None: self.addMeasurementLine(name,a,b,color)
+        if s.show_LL and valid("LL"):
+            line("LL_L1",q("L1 SA"),q("L1 SP")); line("LL_S1",q("S1 SA"),q("S1 SP")); self.addAngleArc("LL",q("L1 SA"),q("L1 SP"),q("S1 SA"),q("S1 SP"),r["LL_deg"],occupied)
+        if s.show_L4_S1 and valid("L4_S1"):
+            line("L4S1_L4",q("L4 SA"),q("L4 SP")); line("L4S1_S1",q("S1 SA"),q("S1 SP")); self.addAngleArc("L4_S1",q("L4 SA"),q("L4 SP"),q("S1 SA"),q("S1 SP"),r["LL_L4_S1_deg"],occupied)
+        if s.show_SS and valid("SS"):
+            line("SS_S1",q("S1 SA"),q("S1 SP")); anchor=self.labelPoint(q("S1 SA"),occupied); self.addMeasurementLabel("SS",anchor,"SS %.1f°" % r["SS_deg"])
+        pelvic=self.lastResults.get("pelvic_validity",{}).get("pelvic_parameters_valid",False)
+        if key=="lat" and pelvic:
+            if s.show_PI and valid("PI"): self.addMeasurementLabel("PI",self.labelPoint(q("S1 SP"),occupied),"PI %.1f°" % r["PI_deg"])
+            if s.show_PT and valid("PT"): self.addMeasurementLabel("PT",self.labelPoint(q("S1 SA"),occupied),"PT %.1f°" % r["PT_deg"])
+        for level in VisualizationSettings.LEVELS:
+            upper,lower=level.split("_")
+            if s.show_IVA.get(level) and valid("IVA_"+level):
+                a,b,c0,d=q(upper+" IA"),q(upper+" IP"),q(lower+" SA"),q(lower+" SP"); line("IVA_"+level+"_U",a,b); line("IVA_"+level+"_L",c0,d); self.addAngleArc("IVA_"+level,a,b,c0,d,r["IVA_"+level+"_deg"],occupied)
+            if s.show_translation.get(level):
+                tm=self.lastResults.get("translation",{}).get(level,{}).get({"lat":"neutral","flex":"flex","ext":"ext"}[key],{})
+                if tm.get("measurement_valid"):
+                    pa,pb,pant=tm["P_A"],tm["P_B"],tm["P_anterior"]; u,v=tm["u"],tm["v"]; line("T_"+level+"_AP",pb,pant,(0.10,0.85,0.35)); proj=[pb[0]+u[0]*tm["translation_scene"],pb[1]+u[1]*tm["translation_scene"],pb[2]]; line("T_"+level,pb,proj,(0.15,0.75,0.95))
+                    text=level.replace("_","→")+"\n"+(("%.1f mm\n" % tm["translation_mm"]) if tm.get("translation_mm") is not None else "")+("%.1f%%" % tm["translation_pct"]); self.addMeasurementLabel("T_"+level,self.labelPoint(proj,occupied),text)
+                    if s.show_auxiliary_geometry:
+                        scale=0.35*tm["AP_reference_scene"]; vend=[pb[0]+v[0]*scale,pb[1]+v[1]*scale,pb[2]]; line("T_"+level+"_V",pb,vend,(0.90,0.75,0.10)); line("T_"+level+"_DROP",pa,proj,(0.85,0.35,0.70))
+        for level in VisualizationSettings.LEVELS:
+            if not s.disc_levels.get(level): continue
+            upper,lower=level.split("_"); ua,up,la,lp=q(upper+" IA"),q(upper+" IP"),q(lower+" SA"),q(lower+" SP")
+            labels=[]
+            if s.show_disc_height_anterior and valid("DH_anterior_"+level): line("DH_A_"+level,ua,la,(0.15,0.75,0.95)); labels.append("A %.1f mm" % r["DH_"+level+"_anterior_mm"])
+            if s.show_disc_height_posterior and valid("DH_posterior_"+level): line("DH_P_"+level,up,lp,(0.15,0.75,0.95)); labels.append("P %.1f mm" % r["DH_"+level+"_posterior_mm"])
+            if s.show_disc_height_mean and valid("DH_mean_"+level): labels.append("M %.1f mm" % r["DH_"+level+"_mean_mm"])
+            if s.show_IHI and valid("IHI_"+level): labels.append("IHI %.1f%%" % r["IHI_"+level+"_pct"])
+            if labels and ua: self.addMeasurementLabel("DISC_"+level,self.labelPoint(ua,occupied),level.replace("_","–")+"\n"+" | ".join(labels))
+        if s.show_auxiliary_geometry:
+            node=self.markupNodes.get(key)
+            if node and node.GetDisplayNode(): node.GetDisplayNode().SetVisibility(True); node.GetDisplayNode().SetPointLabelsVisibility(True)
+        return True
+    def captureAnnotatedProjection(self,key,path):
         volume=self.selectors[key].currentNode()
-        if volume: slicer.util.setSliceViewerLayers(background=volume,fit=True)
+        if volume is None or key not in self.markupNodes: return False
+        slicer.util.setSliceViewerLayers(background=volume,fit=True)
         for projection,node in self.markupNodes.items():
             if node.GetDisplayNode(): node.GetDisplayNode().SetVisibility(False)
         self.buildMeasurementOverlays(key)
-        path=qt.QFileDialog.getSaveFileName(slicer.util.mainWindow(),"Guardar imagen con trazos / Save traced image","","PNG (*.png)")
-        if not path: return
-        if not path.lower().endswith(".png"): path+=".png"
         widget=slicer.app.layoutManager().sliceWidget("Red")
-        if widget: widget.grab().save(path,"PNG")
+        if not widget: return False
+        return widget.grab().save(path,"PNG")
+
+    def generateDynamicComparison(self,directory):
+        import os
+        flex=os.path.join(directory,"Flexion_Annotated.png"); ext=os.path.join(directory,"Extension_Annotated.png")
+        if not (os.path.exists(flex) and os.path.exists(ext)): return None
+        a=qt.QImage(flex); b=qt.QImage(ext); out=qt.QImage(a.width()+b.width(),max(a.height(),b.height()),qt.QImage.Format_ARGB32); out.fill(qt.QColor("black"))
+        painter=qt.QPainter(out); painter.drawImage(0,0,a); painter.drawImage(a.width(),0,b); painter.end()
+        path=os.path.join(directory,"Dynamic_Comparison.png"); out.save(path,"PNG"); return path
+
+    def generateFigure(self):
+        import os
+        self.calculateMeasurements()
+        directory=qt.QFileDialog.getExistingDirectory(slicer.util.mainWindow(),"Guardar imágenes anotadas / Save annotated images")
+        if not directory: return
+        names={"lat":"Neutral_Annotated.png","flex":"Flexion_Annotated.png","ext":"Extension_Annotated.png"}
+        for key,name in names.items():
+            if self.selectors[key].currentNode() is not None and key in self.markupNodes: self.captureAnnotatedProjection(key,os.path.join(directory,name))
+        if self.dynamicComparisonCheck.checked: self.generateDynamicComparison(directory)
+        self.lastResults["visualization"]=self.readVisualizationSettings().toDict() if self.sameVisualizationCheck.checked else {key:self.visualizationSettings[key].toDict() for key in ("lat","flex","ext")}
 
 class LumbarRadiographyLogic(ScriptedLoadableModuleLogic):
-    DEFINITION_VERSION="1.4.0"
+    DEFINITION_VERSION="1.5.0"
     def createLandmarkNode(self,name):
         node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode",name); node.SetDescription("ONeSpineRx manual anatomical landmarks"); return node
     def saveMarkups(self,node,filePath):
