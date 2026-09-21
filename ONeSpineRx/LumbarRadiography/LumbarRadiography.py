@@ -381,7 +381,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         if not math.isfinite(t): base["invalid_reason"]="non_finite_projection"; return base
         pct=100.0*t/ap; factor=self.calibrationFactor(key)
         expected=self.orientationCombo.itemData(self.orientationCombo.currentIndex); observed="right" if dx>0 else "left"
-        base.update({"measurement_valid":True,"invalid_reason":None,"P_A":list(pa),"P_B":list(pb),"P_anterior":list(pant),"u":[ux,uy],"v":[vx,vy],"AP_reference_scene":ap,"translation_scene":t,"translation_pct":pct,"orientation_expected":expected,"orientation_observed":observed,"orientation_qc":expected==observed})
+        orientationOK=(expected==observed)\n        base.update({"measurement_valid":orientationOK,"invalid_reason":None if orientationOK else "anterior_posterior_orientation_mismatch","P_A":list(pa),"P_B":list(pb),"P_anterior":list(pant),"u":[ux,uy],"v":[vx,vy],"AP_reference_scene":ap,"translation_scene":t,"translation_pct":pct,"orientation_expected":expected,"orientation_observed":observed,"orientation_qc":orientationOK})
         if factor is not None: base["translation_mm"]=t*factor; base["AP_reference_mm"]=ap*factor
         return base
 
@@ -404,7 +404,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         key=self.debugProjection.itemData(self.debugProjection.currentIndex); segment=self.debugSegment.itemData(self.debugSegment.currentIndex); upper,lower=segment.split("-")
         m=self.translationMeasurement(key,upper,lower); lines=["%s %s" % (self.PREFIX[key],segment)]
         for name in ("P_A","P_B","P_anterior","u","v","AP_reference_scene","translation_scene","translation_mm","translation_pct","calibration_valid","orientation_expected","orientation_observed","orientation_qc","measurement_valid","invalid_reason"): lines.append("%s = %s" % (name,m.get(name)))
-        self.debugText.plainText="\\n".join(lines)
+        self.debugText.plainText="\n".join(lines)
         if m.get("measurement_valid"): self.buildTranslationOverlay(key,upper,lower,m)
 
     def buildTranslationOverlay(self,key,upper,lower,m):
@@ -462,7 +462,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
                 for level,item in data.items(): lines.append("%s: neutral=%s%% flex=%s%% ext=%s%% delta=%s%%" % (level, self.fmt(item.get("neutral_pct")), self.fmt(item.get("flex_pct")), self.fmt(item.get("ext_pct")), self.fmt(item.get("delta_flex_ext_pct"))))
             lines.append("")
         lines.append("ECA: pendiente de landmark de concavidad; no puede inferirse de las cuatro esquinas vertebrales.")
-        self.resultsText.plainText="\\n".join(lines)
+        self.resultsText.plainText="\n".join(lines)
     def fmt(self,value):
         return "NA" if value is None else ("%.2f" % value)
 
@@ -515,7 +515,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         if widget: widget.grab().save(path,"PNG")
 
 class LumbarRadiographyLogic(ScriptedLoadableModuleLogic):
-    DEFINITION_VERSION="1.3.0"
+    DEFINITION_VERSION="1.3.1"
     def createLandmarkNode(self,name):
         node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode",name); node.SetDescription("ONeSpineRx manual anatomical landmarks"); return node
     def saveMarkups(self,node,filePath):
