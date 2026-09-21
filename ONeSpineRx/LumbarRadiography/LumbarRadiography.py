@@ -17,7 +17,7 @@ TRANSLATIONS = {
         "noVolume":"Seleccione un volumen para esta proyección.",
         "ready":"Seleccione las cuatro proyecciones y pulse Iniciar registro en la proyección que desea medir.",
         "complete":"Registro finalizado. Revise los puntos antes de calcular o exportar.", "results":"Resultados", "calculate":"Calcular medidas", "copy":"Copiar valores", "figure":"Generar imagen",
-        "skipped":"Omitido", "calibration":"Calibración milimétrica por proyección", "calibrate":"Calibrar", "knownLength":"Longitud conocida (mm)",
+        "skipped":"Omitido", "calibration":"Calibración milimétrica por proyección", "calibrate":"Calibrar", "knownLength":"Longitud conocida (mm)", "orientation":"Orientación sagital", "anteriorLeft":"Anterior a la izquierda", "anteriorRight":"Anterior a la derecha", "debug":"Depuración traslación", "debugRun":"Depurar segmento",
     },
     "en": {
         "study":"Radiographic study", "language":"Language", "ap":"AP", "lat":"Neutral lateral",
@@ -30,7 +30,7 @@ TRANSLATIONS = {
         "noVolume":"Select a volume for this projection.",
         "ready":"Select all four projections and press Start registration on the projection you want to measure.",
         "complete":"Registration finished. Review landmarks before calculation or export.", "results":"Results", "calculate":"Calculate measurements", "copy":"Copy values", "figure":"Generate image",
-        "skipped":"Skipped", "calibration":"Millimetric calibration by projection", "calibrate":"Calibrate", "knownLength":"Known length (mm)",
+        "skipped":"Skipped", "calibration":"Millimetric calibration by projection", "calibrate":"Calibrate", "knownLength":"Known length (mm)", "orientation":"Sagittal orientation", "anteriorLeft":"Anterior on left", "anteriorRight":"Anterior on right", "debug":"Translation debug", "debugRun":"Debug segment",
     },
 }
 
@@ -98,6 +98,9 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.validationText=qt.QLabel()
         self.validationText.wordWrap=True
         validationLayout.addWidget(self.validationText)
+        orientationRow=qt.QHBoxLayout(); self.orientationLabel=qt.QLabel(); self.orientationCombo=qt.QComboBox()
+        self.orientationCombo.addItem("Anterior ←", "left"); self.orientationCombo.addItem("Anterior →", "right")
+        orientationRow.addWidget(self.orientationLabel); orientationRow.addWidget(self.orientationCombo); validationLayout.addLayout(orientationRow)
         self.layout.addWidget(self.validationBox)
         self.importButton.connect("clicked()",self.importDicom)
         self.categorizeButton.connect("clicked()",self.categorizeLoadedVolumes)
@@ -126,6 +129,13 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         resultButtons.addWidget(self.calculateButton); resultButtons.addWidget(self.copyButton); resultButtons.addWidget(self.figureButton); resultsLayout.addLayout(resultButtons)
         self.resultsText=qt.QTextEdit(); self.resultsText.readOnly=True; self.resultsText.minimumHeight=180; resultsLayout.addWidget(self.resultsText)
         self.layout.addWidget(self.resultsBox); self.lastResults={}
+        self.debugBox=qt.QGroupBox(); dbg=qt.QVBoxLayout(self.debugBox); dbgRow=qt.QHBoxLayout()
+        self.debugProjection=qt.QComboBox(); self.debugProjection.addItem("LAT","lat"); self.debugProjection.addItem("FLEX","flex"); self.debugProjection.addItem("EXT","ext")
+        self.debugSegment=qt.QComboBox()
+        for segment in ("L1-L2","L2-L3","L3-L4","L4-L5","L5-S1"): self.debugSegment.addItem(segment,segment)
+        self.debugButton=qt.QPushButton(); dbgRow.addWidget(self.debugProjection); dbgRow.addWidget(self.debugSegment); dbgRow.addWidget(self.debugButton); dbg.addLayout(dbgRow)
+        self.debugText=qt.QTextEdit(); self.debugText.readOnly=True; self.debugText.minimumHeight=160; dbg.addWidget(self.debugText); self.layout.addWidget(self.debugBox)
+        self.debugButton.connect("clicked()",self.debugTranslation)
         self.calculateButton.connect("clicked()",self.calculateMeasurements); self.copyButton.connect("clicked()",self.copyResults); self.figureButton.connect("clicked()",self.generateFigure)
         self.previousButton.connect("clicked()",self.previousLandmark); self.nextButton.connect("clicked()",self.nextLandmark); self.skipButton.connect("clicked()",self.skipCurrent); self.editButton.connect("clicked()",self.editCurrent); self.saveButton.connect("clicked()",self.saveChanges); self.finishButton.connect("clicked()",self.finishRegistration)
         self.languageCombo.connect("currentIndexChanged(int)",self.changeLanguage)
@@ -138,8 +148,8 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.lang=self.languageCombo.itemData(self.languageCombo.currentIndex); self.applyLanguage(); self.updateGuide()
 
     def applyLanguage(self):
-        self.studyBox.title=self.tr("study"); self.landmarkBox.title=self.tr("landmarks"); self.validationBox.title=self.tr("validation"); self.resultsBox.title=self.tr("results"); self.calibrationBox.title=self.tr("calibration")
-        self.importButton.text=self.tr("importDicom"); self.categorizeButton.text=self.tr("categorize"); self.validateButton.text=self.tr("validate")
+        self.studyBox.title=self.tr("study"); self.landmarkBox.title=self.tr("landmarks"); self.validationBox.title=self.tr("validation"); self.resultsBox.title=self.tr("results"); self.calibrationBox.title=self.tr("calibration"); self.debugBox.title=self.tr("debug")
+        self.importButton.text=self.tr("importDicom"); self.categorizeButton.text=self.tr("categorize"); self.validateButton.text=self.tr("validate"); self.orientationLabel.text=self.tr("orientation"); self.debugButton.text=self.tr("debugRun")
         for key in self.PROJECTION_KEYS:
             getattr(self,key+"Label").text=self.tr(key)
             getattr(self,key+"StartButton").text=self.tr("start")
@@ -356,6 +366,56 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         angle=abs(math.degrees(math.atan2(ux*vy-uy*vx,ux*vx+uy*vy)))%180.0
         return min(angle,180.0-angle)
 
+    def translationMeasurement(self,key,upper,lower):
+        import math
+        p=self.pointMap(key); prefix=self.PREFIX[key]; q=lambda name: p.get(prefix+" "+name)
+        names=(upper+" IP",lower+" SP",lower+" SA"); missing=[n for n in names if q(n) is None]
+        base={"measurement_valid":False,"invalid_reason":None,"calibration_valid":self.calibrationFactor(key) is not None,"translation_mm":None,"translation_pct":None}
+        if missing: base["invalid_reason"]="missing_landmarks:"+",".join(missing); return base
+        pa,pb,pant=q(upper+" IP"),q(lower+" SP"),q(lower+" SA")
+        values=pa+pb+pant
+        if not all(math.isfinite(x) for x in values): base["invalid_reason"]="non_finite_coordinates"; return base
+        dx,dy=pant[0]-pb[0],pant[1]-pb[1]; ap=math.hypot(dx,dy)
+        if ap<=1e-9: base["invalid_reason"]="invalid_AP_reference"; return base
+        ux,uy=dx/ap,dy/ap; vx,vy=-uy,ux; rx,ry=pa[0]-pb[0],pa[1]-pb[1]; t=rx*ux+ry*uy
+        if not math.isfinite(t): base["invalid_reason"]="non_finite_projection"; return base
+        pct=100.0*t/ap; factor=self.calibrationFactor(key)
+        expected=self.orientationCombo.itemData(self.orientationCombo.currentIndex); observed="right" if dx>0 else "left"
+        base.update({"measurement_valid":True,"invalid_reason":None,"P_A":list(pa),"P_B":list(pb),"P_anterior":list(pant),"u":[ux,uy],"v":[vx,vy],"AP_reference_scene":ap,"translation_scene":t,"translation_pct":pct,"orientation_expected":expected,"orientation_observed":observed,"orientation_qc":expected==observed})
+        if factor is not None: base["translation_mm"]=t*factor; base["AP_reference_mm"]=ap*factor
+        return base
+
+    def calculateTranslations(self):
+        segments=(("L1","L2"),("L2","L3"),("L3","L4"),("L4","L5"),("L5","S1")); out={}
+        for upper,lower in segments:
+            name=upper+"_"+lower; n=self.translationMeasurement("lat",upper,lower); f=self.translationMeasurement("flex",upper,lower); e=self.translationMeasurement("ext",upper,lower)
+            item={"neutral_mm":n.get("translation_mm"),"neutral_pct":n.get("translation_pct"),"flex_mm":f.get("translation_mm"),"flex_pct":f.get("translation_pct"),"ext_mm":e.get("translation_mm"),"ext_pct":e.get("translation_pct"),"neutral":n,"flex":f,"ext":e}
+            if f.get("measurement_valid") and e.get("measurement_valid"):
+                ds=e["translation_pct"]-f["translation_pct"]; item["delta_signed_pct"]=ds; item["delta_flex_ext_pct"]=abs(ds)
+                if f.get("translation_mm") is not None and e.get("translation_mm") is not None:
+                    dmm=e["translation_mm"]-f["translation_mm"]; item["delta_signed_mm"]=dmm; item["delta_flex_ext_mm"]=abs(dmm)
+                else: item["delta_signed_mm"]=None; item["delta_flex_ext_mm"]=None
+            else:
+                item.update({"delta_signed_pct":None,"delta_flex_ext_pct":None,"delta_signed_mm":None,"delta_flex_ext_mm":None})
+            out[name]=item
+        return out
+
+    def debugTranslation(self):
+        key=self.debugProjection.itemData(self.debugProjection.currentIndex); segment=self.debugSegment.itemData(self.debugSegment.currentIndex); upper,lower=segment.split("-")
+        m=self.translationMeasurement(key,upper,lower); lines=["%s %s" % (self.PREFIX[key],segment)]
+        for name in ("P_A","P_B","P_anterior","u","v","AP_reference_scene","translation_scene","translation_mm","translation_pct","calibration_valid","orientation_expected","orientation_observed","orientation_qc","measurement_valid","invalid_reason"): lines.append("%s = %s" % (name,m.get(name)))
+        self.debugText.plainText="\\n".join(lines)
+        if m.get("measurement_valid"): self.buildTranslationOverlay(key,upper,lower,m)
+
+    def buildTranslationOverlay(self,key,upper,lower,m):
+        self.clearMeasurementOverlays(); pa=m["P_A"]; pb=m["P_B"]; pant=m["P_anterior"]; ap=m["AP_reference_scene"]; u=m["u"]; v=m["v"]
+        self.addMeasurementLine("T_"+upper+"_"+lower+"_AP",pb,pant,(0.10,0.85,0.35))
+        scale=0.35*ap; vend=[pb[0]+v[0]*scale,pb[1]+v[1]*scale,pb[2]]; self.addMeasurementLine("T_"+upper+"_"+lower+"_V",pb,vend,(0.90,0.75,0.10))
+        proj=[pb[0]+u[0]*m["translation_scene"],pb[1]+u[1]*m["translation_scene"],pb[2]]; self.addMeasurementLine("T_"+upper+"_"+lower+"_PROJ",pb,proj,(0.15,0.75,0.95)); self.addMeasurementLine("T_"+upper+"_"+lower+"_DROP",pa,proj,(0.85,0.35,0.70))
+        volume=self.selectors[key].currentNode()
+        if volume: slicer.util.setSliceViewerLayers(background=volume,fit=True)
+        for projection,node in self.markupNodes.items():
+            if node.GetDisplayNode(): node.GetDisplayNode().SetVisibility(projection==key)
     def calculateMeasurements(self):
         results={}
         for key in ("lat","flex","ext"):
@@ -391,12 +451,21 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         dyn={}
         for name in set(results.get("flex",{})).intersection(results.get("ext",{})):
             if name.endswith("_deg"): dyn["delta_"+name]=abs(results["flex"][name]-results["ext"][name])
-        results["dynamic"]=dyn; self.lastResults=results
+        results["dynamic"]=dyn
+        results["translation"]=self.calculateTranslations()
+        self.lastResults=results
         lines=[]
         for section,data in results.items():
-            lines.append("["+section.upper()+"]"); lines.extend("%s = %.2f" % (name,value) for name,value in data.items()); lines.append("")
+            lines.append("["+section.upper()+"]")
+            if section!="translation": lines.extend("%s = %.2f" % (name,value) for name,value in data.items())
+            else:
+                for level,item in data.items(): lines.append("%s: neutral=%s%% flex=%s%% ext=%s%% delta=%s%%" % (level, self.fmt(item.get("neutral_pct")), self.fmt(item.get("flex_pct")), self.fmt(item.get("ext_pct")), self.fmt(item.get("delta_flex_ext_pct"))))
+            lines.append("")
         lines.append("ECA: pendiente de landmark de concavidad; no puede inferirse de las cuatro esquinas vertebrales.")
         self.resultsText.plainText="\\n".join(lines)
+    def fmt(self,value):
+        return "NA" if value is None else ("%.2f" % value)
+
     def copyResults(self):
         if not self.lastResults: self.calculateMeasurements()
         qt.QApplication.clipboard().setText(json.dumps(self.lastResults,indent=2,ensure_ascii=False))
@@ -446,7 +515,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         if widget: widget.grab().save(path,"PNG")
 
 class LumbarRadiographyLogic(ScriptedLoadableModuleLogic):
-    DEFINITION_VERSION="1.2.0"
+    DEFINITION_VERSION="1.3.0"
     def createLandmarkNode(self,name):
         node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode",name); node.SetDescription("ONeSpineRx manual anatomical landmarks"); return node
     def saveMarkups(self,node,filePath):
