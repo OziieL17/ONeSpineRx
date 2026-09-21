@@ -2,6 +2,7 @@ import json
 import slicer
 import qt
 import vtk
+import ctk
 from slicer.ScriptedLoadableModule import *
 from slicer.util import VTKObservationMixin
 
@@ -48,6 +49,20 @@ LANDMARK_HELP = {
     "S1_L": {"es":"Extremo izquierdo del platillo superior de S1 en AP.", "en":"Left end of the S1 superior endplate on AP."},
     "S1_R": {"es":"Extremo derecho del platillo superior de S1 en AP.", "en":"Right end of the S1 superior endplate on AP."},
 }
+
+
+class VisualizationSettings:
+    LEVELS=("L1_L2","L2_L3","L3_L4","L4_L5","L5_S1")
+    def __init__(self):
+        self.preset="custom"
+        self.show_LL=False; self.show_L4_S1=False; self.show_SS=False; self.show_PI=False; self.show_PT=False
+        self.show_IVA={level:False for level in self.LEVELS}
+        self.show_translation={level:False for level in self.LEVELS}
+        self.show_disc_height_anterior=False; self.show_disc_height_posterior=False; self.show_disc_height_mean=False; self.show_IHI=False
+        self.disc_levels={level:False for level in self.LEVELS}
+        self.show_auxiliary_geometry=False
+    def toDict(self):
+        return {"preset":self.preset,"show_LL":self.show_LL,"show_L4_S1":self.show_L4_S1,"show_SS":self.show_SS,"show_PI":self.show_PI,"show_PT":self.show_PT,"show_IVA":dict(self.show_IVA),"show_translation":dict(self.show_translation),"show_disc_height_anterior":self.show_disc_height_anterior,"show_disc_height_posterior":self.show_disc_height_posterior,"show_disc_height_mean":self.show_disc_height_mean,"show_IHI":self.show_IHI,"disc_levels":dict(self.disc_levels),"show_auxiliary_geometry":self.show_auxiliary_geometry}
 
 
 class LumbarRadiography(ScriptedLoadableModule):
@@ -124,6 +139,46 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         cal.addWidget(self.calibrationProjection,0,0); cal.addWidget(self.knownLengthSpin,0,1); cal.addWidget(self.calibrateButton,0,2); cal.addWidget(self.calibrationStatus,1,0,1,3)
         self.layout.addWidget(self.calibrationBox); self.calibrations={}; self.pendingCalibration=None; self.calibrationObserverTag=None
         self.calibrateButton.connect("clicked()",self.startCalibration)
+
+        self.visualizationBox=ctk.ctkCollapsibleButton() if "ctk" in globals() else qt.QGroupBox()
+        self.visualizationBox.text="Mediciones a mostrar en imagen" if hasattr(self.visualizationBox,"text") else ""
+        self.visualizationBox.title="Mediciones a mostrar en imagen" if hasattr(self.visualizationBox,"title") else ""
+        vis=qt.QVBoxLayout(self.visualizationBox)
+        presetRow=qt.QHBoxLayout(); self.presetButtons={}
+        for preset,label in (("clean","Limpia"),("global","Global"),("segmental","Segmentaria"),("dynamic","Dinámica"),("complete","Completa"),("custom","Personalizada")):
+            b=qt.QPushButton(label); self.presetButtons[preset]=b; presetRow.addWidget(b); b.connect("clicked()",lambda p=preset:self.applyVisualizationPreset(p))
+        vis.addLayout(presetRow)
+        self.sameVisualizationCheck=qt.QCheckBox("Usar misma configuración para Neutral/Flexión/Extensión"); self.sameVisualizationCheck.checked=True; vis.addWidget(self.sameVisualizationCheck)
+        self.visualizationProjection=qt.QComboBox(); self.visualizationProjection.addItem("NEUTRAL","lat"); self.visualizationProjection.addItem("FLEXION","flex"); self.visualizationProjection.addItem("EXTENSION","ext"); self.visualizationProjection.enabled=False; vis.addWidget(self.visualizationProjection)
+        self.sameVisualizationCheck.connect("toggled(bool)",lambda checked:setattr(self.visualizationProjection,"enabled",not checked))
+        vis.addWidget(qt.QLabel("Alineación global"))
+        self.globalChecks={}
+        for name,label in (("LL","Lordosis lumbar L1–S1 (LL)"),("L4_S1","Lordosis distal L4–S1"),("SS","Sacral slope (SS)"),("PI","Pelvic incidence (PI)"),("PT","Pelvic tilt (PT)")):
+            cb=qt.QCheckBox(label); self.globalChecks[name]=cb; vis.addWidget(cb)
+        self.pelvicReliableCheck=qt.QCheckBox("Parámetros pélvicos fiables"); self.pelvicReliableCheck.checked=True; vis.addWidget(self.pelvicReliableCheck)
+        vis.addWidget(qt.QLabel("Ángulos segmentarios"))
+        self.ivaChecks={}; self.allIvaCheck=qt.QCheckBox("Mostrar todos los IVA"); vis.addWidget(self.allIvaCheck)
+        for level in VisualizationSettings.LEVELS:
+            cb=qt.QCheckBox("IVA "+level.replace("_","–")); self.ivaChecks[level]=cb; vis.addWidget(cb)
+        self.allIvaCheck.connect("toggled(bool)",lambda checked:self.setCheckGroup(self.ivaChecks,checked))
+        vis.addWidget(qt.QLabel("Traslación"))
+        self.translationChecks={}; self.allTranslationCheck=qt.QCheckBox("Mostrar todas las traslaciones"); vis.addWidget(self.allTranslationCheck)
+        for level in VisualizationSettings.LEVELS:
+            cb=qt.QCheckBox("Traslación "+level.replace("_","–")); self.translationChecks[level]=cb; vis.addWidget(cb)
+        self.allTranslationCheck.connect("toggled(bool)",lambda checked:self.setCheckGroup(self.translationChecks,checked))
+        vis.addWidget(qt.QLabel("Altura discal"))
+        self.discMetricChecks={}
+        for name,label in (("anterior","Altura anterior"),("posterior","Altura posterior"),("mean","Altura media"),("IHI","IHI")):
+            cb=qt.QCheckBox(label); self.discMetricChecks[name]=cb; vis.addWidget(cb)
+        discRow=qt.QHBoxLayout(); discRow.addWidget(qt.QLabel("Niveles:")); self.discLevelChecks={}
+        for level in VisualizationSettings.LEVELS:
+            cb=qt.QCheckBox(level.replace("_","–")); self.discLevelChecks[level]=cb; discRow.addWidget(cb)
+        vis.addLayout(discRow)
+        self.auxGeometryCheck=qt.QCheckBox("Mostrar geometría auxiliar"); self.auxGeometryCheck.checked=False; vis.addWidget(self.auxGeometryCheck)
+        self.dynamicComparisonCheck=qt.QCheckBox("Generar Dynamic comparison"); self.dynamicComparisonCheck.checked=False; vis.addWidget(self.dynamicComparisonCheck)
+        self.layout.addWidget(self.visualizationBox)
+        self.visualizationSettings={key:VisualizationSettings() for key in ("lat","flex","ext")}
+
         self.resultsBox=qt.QGroupBox(); resultsLayout=qt.QVBoxLayout(self.resultsBox)
         resultButtons=qt.QHBoxLayout(); self.calculateButton=qt.QPushButton(); self.copyButton=qt.QPushButton(); self.figureButton=qt.QPushButton()
         resultButtons.addWidget(self.calculateButton); resultButtons.addWidget(self.copyButton); resultButtons.addWidget(self.figureButton); resultsLayout.addLayout(resultButtons)
@@ -353,6 +408,39 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         for b in (self.previousButton,self.nextButton,self.skipButton,self.editButton,self.saveButton,self.finishButton):
             b.enabled=False
         self.activeProjection=None
+    def setCheckGroup(self,group,checked):
+        for cb in group.values(): cb.checked=checked
+
+    def visualizationKey(self):
+        return self.visualizationProjection.itemData(self.visualizationProjection.currentIndex)
+
+    def readVisualizationSettings(self,key=None):
+        key=key or self.visualizationKey(); s=self.visualizationSettings[key]
+        s.show_LL=self.globalChecks["LL"].checked; s.show_L4_S1=self.globalChecks["L4_S1"].checked; s.show_SS=self.globalChecks["SS"].checked
+        s.show_PI=self.globalChecks["PI"].checked; s.show_PT=self.globalChecks["PT"].checked
+        s.show_IVA={level:cb.checked for level,cb in self.ivaChecks.items()}; s.show_translation={level:cb.checked for level,cb in self.translationChecks.items()}
+        s.show_disc_height_anterior=self.discMetricChecks["anterior"].checked; s.show_disc_height_posterior=self.discMetricChecks["posterior"].checked; s.show_disc_height_mean=self.discMetricChecks["mean"].checked; s.show_IHI=self.discMetricChecks["IHI"].checked
+        s.disc_levels={level:cb.checked for level,cb in self.discLevelChecks.items()}; s.show_auxiliary_geometry=self.auxGeometryCheck.checked
+        if self.sameVisualizationCheck.checked:
+            payload=s.toDict()
+            for other in ("lat","flex","ext"):
+                if other==key: continue
+                o=self.visualizationSettings[other]; o.__dict__.update({k:(dict(v) if isinstance(v,dict) else v) for k,v in s.__dict__.items()})
+        return s
+
+    def applyVisualizationPreset(self,preset):
+        for cb in list(self.globalChecks.values())+list(self.ivaChecks.values())+list(self.translationChecks.values())+list(self.discMetricChecks.values()): cb.checked=False
+        if preset=="global":
+            for name in ("LL","L4_S1","SS"): self.globalChecks[name].checked=True
+        elif preset=="segmental": self.setCheckGroup(self.ivaChecks,True)
+        elif preset=="dynamic":
+            self.setCheckGroup(self.ivaChecks,True); self.setCheckGroup(self.translationChecks,True)
+        elif preset=="complete":
+            for cb in self.globalChecks.values(): cb.checked=True
+            self.setCheckGroup(self.ivaChecks,True); self.setCheckGroup(self.translationChecks,True)
+            for cb in self.discMetricChecks.values(): cb.checked=True
+            for cb in self.discLevelChecks.values(): cb.checked=True
+        self.readVisualizationSettings().preset=preset
     def pointMap(self,key):
         node=self.markupNodes.get(key); points={}
         if not node: return points
@@ -516,7 +604,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         if widget: widget.grab().save(path,"PNG")
 
 class LumbarRadiographyLogic(ScriptedLoadableModuleLogic):
-    DEFINITION_VERSION="1.3.1"
+    DEFINITION_VERSION="1.4.0"
     def createLandmarkNode(self,name):
         node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode",name); node.SetDescription("ONeSpineRx manual anatomical landmarks"); return node
     def saveMarkups(self,node,filePath):
