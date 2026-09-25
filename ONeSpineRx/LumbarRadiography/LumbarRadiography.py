@@ -140,9 +140,9 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.layout.addWidget(self.calibrationBox); self.calibrations={}; self.pendingCalibration=None; self.calibrationObserverTag=None
         self.calibrateButton.connect("clicked()",self.startCalibration)
 
-        self.visualizationBox=ctk.ctkCollapsibleButton() if "ctk" in globals() else qt.QGroupBox()
-        self.visualizationBox.text="Mediciones a mostrar en imagen" if hasattr(self.visualizationBox,"text") else ""
-        self.visualizationBox.title="Mediciones a mostrar en imagen" if hasattr(self.visualizationBox,"title") else ""
+        self.visualizationBox=ctk.ctkCollapsibleButton()
+        self.visualizationBox.text="Mediciones a mostrar en imagen"
+        self.visualizationBox.collapsed=True
         vis=qt.QVBoxLayout(self.visualizationBox)
         presetRow=qt.QHBoxLayout(); self.presetButtons={}
         for preset,label in (("clean","Limpia"),("global","Global"),("segmental","Segmentaria"),("dynamic","Dinámica"),("complete","Completa"),("custom","Personalizada")):
@@ -735,7 +735,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.lastResults["visualization"]=self.readVisualizationSettings().toDict() if self.sameVisualizationCheck.checked else {key:self.visualizationSettings[key].toDict() for key in ("lat","flex","ext")}
 
 class LumbarRadiographyLogic(ScriptedLoadableModuleLogic):
-    DEFINITION_VERSION="1.5.1"
+    DEFINITION_VERSION="1.5.2"
     def createLandmarkNode(self,name):
         node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode",name); node.SetDescription("ONeSpineRx manual anatomical landmarks"); return node
     def saveMarkups(self,node,filePath):
