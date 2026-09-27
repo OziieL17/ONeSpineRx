@@ -46,3 +46,28 @@ def polygon_area_2d(points) -> float:
         q = points[(i+1) % len(points)]
         area2 += float(p[0])*float(q[1]) - float(q[0])*float(p[1])
     return abs(area2) * 0.5
+
+
+def orthonormal_frame_2d(origin: Point, posterior: Point, anterior: Point):
+    """Return a right-handed 2D frame with +u directed posterior -> anterior."""
+    u = normalize2((anterior[0]-posterior[0], anterior[1]-posterior[1]))
+    v = (-u[1], u[0])
+    return {
+        "origin": (float(origin[0]), float(origin[1])),
+        "u": u,
+        "v": v,
+    }
+
+def sacral_reference_frame(s1_posterior: Point, s1_anterior: Point):
+    """Pelvic-sacral reference frame centered at the midpoint of the S1 superior endplate."""
+    origin = midpoint(s1_posterior, s1_anterior)
+    return orthonormal_frame_2d(origin, s1_posterior, s1_anterior)
+
+def point_in_frame_2d(point: Point, frame):
+    """Coordinates of point in an orthonormal 2D frame."""
+    r = (float(point[0])-frame["origin"][0], float(point[1])-frame["origin"][1])
+    return dot2(r, frame["u"]), dot2(r, frame["v"])
+
+def vector_in_frame_2d(vector_: Point, frame):
+    """Components of a free vector in an orthonormal 2D frame."""
+    return dot2(vector_, frame["u"]), dot2(vector_, frame["v"])
