@@ -78,3 +78,46 @@ def projected_disc_geometry(cranial_ai, cranial_pi, caudal_as, caudal_ps, scale_
             "scale_mm_per_scene": scale,
         },
     }
+
+
+def projected_foraminal_geometry(f_sup, f_inf, f_ant, f_post, scale_mm_per_scene=None, projection_quality=None):
+    """Projected 2D neural-foramen geometry from four manual boundary landmarks.
+
+    FH is superior-inferior span, FW is anterior-posterior span, and projected
+    area is the quadrilateral F_SUP -> F_ANT -> F_INF -> F_POST. Absolute
+    millimetric values require verified calibration. Projection QC is kept
+    separate from geometry: valid -> valid, limited -> provisional,
+    invalid/unset -> invalid.
+    """
+    fh_scene = distance(f_sup, f_inf)
+    fw_scene = distance(f_ant, f_post)
+    area_scene = polygon_area_2d([f_sup, f_ant, f_inf, f_post])
+    calibrated = scale_mm_per_scene is not None and float(scale_mm_per_scene) > 0.0
+    scale = float(scale_mm_per_scene) if calibrated else None
+    quality = projection_quality if projection_quality in ("valid", "limited", "invalid") else None
+    if quality == "valid" and calibrated:
+        status, valid, reason = "valid", True, None
+    elif quality == "limited" and calibrated:
+        status, valid, reason = "provisional", True, "projection_quality_limited"
+    elif quality == "invalid":
+        status, valid, reason = "invalid", False, "projection_quality_invalid"
+    elif not calibrated:
+        status, valid, reason = "invalid", False, "calibration_unavailable"
+    else:
+        status, valid, reason = "invalid", False, "projection_quality_unset"
+    return {
+        "FH_mm": fh_scene*scale if calibrated else None,
+        "FW_mm": fw_scene*scale if calibrated else None,
+        "projected_area_mm2": area_scene*(scale**2) if calibrated else None,
+        "measurement_valid": valid,
+        "measurement_status": status,
+        "invalid_reason": reason,
+        "projection_quality": quality,
+        "debug": {
+            "FH_scene": fh_scene,
+            "FW_scene": fw_scene,
+            "area_scene": area_scene,
+            "polygon_points": [list(p[:2]) for p in (f_sup, f_ant, f_inf, f_post)],
+            "scale_mm_per_scene": scale,
+        },
+    }
