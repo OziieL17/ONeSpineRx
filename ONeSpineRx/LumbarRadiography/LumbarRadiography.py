@@ -187,7 +187,8 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.visualizationSettings={key:VisualizationSettings() for key in ("lat","flex","ext")}
 
         self.resultsBox=qt.QGroupBox(); resultsLayout=qt.QVBoxLayout(self.resultsBox)
-        resultButtons=qt.QHBoxLayout(); self.calculateButton=qt.QPushButton(); self.copyButton=qt.QPushButton(); self.figureButton=qt.QPushButton(); self.saveJsonButton=qt.QPushButton(); self.saveProjectButton=qt.QPushButton()\n        resultButtons.addWidget(self.calculateButton); resultButtons.addWidget(self.copyButton); resultButtons.addWidget(self.figureButton); resultButtons.addWidget(self.saveJsonButton); resultButtons.addWidget(self.saveProjectButton); resultsLayout.addLayout(resultButtons)
+        resultButtons=qt.QHBoxLayout(); self.calculateButton=qt.QPushButton(); self.copyButton=qt.QPushButton(); self.figureButton=qt.QPushButton(); self.saveJsonButton=qt.QPushButton(); self.saveProjectButton=qt.QPushButton()
+        resultButtons.addWidget(self.calculateButton); resultButtons.addWidget(self.copyButton); resultButtons.addWidget(self.figureButton); resultButtons.addWidget(self.saveJsonButton); resultButtons.addWidget(self.saveProjectButton); resultsLayout.addLayout(resultButtons)
         self.resultsText=qt.QTextEdit(); self.resultsText.readOnly=True; self.resultsText.minimumHeight=180; resultsLayout.addWidget(self.resultsText)
         self.layout.addWidget(self.resultsBox); self.lastResults={}
         self.debugBox=qt.QGroupBox(); dbg=qt.QVBoxLayout(self.debugBox); dbgRow=qt.QHBoxLayout()
