@@ -812,8 +812,16 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
 
     def addAngleArc(self,name,a,b,c,d,value,occupied):
         import math
-        m1=[(a[i]+b[i])/2.0 for i in range(3)]; m2=[(c[i]+d[i])/2.0 for i in range(3)]; center=[(m1[i]+m2[i])/2.0 for i in range(3)]
-        u=[b[0]-a[0],b[1]-a[1]]; v=[d[0]-c[0],d[1]-c[1]]; au=math.atan2(u[1],u[0]); av=math.atan2(v[1],v[0])
+        u=[b[0]-a[0],b[1]-a[1]]; v=[d[0]-c[0],d[1]-c[1]]
+        cross=u[0]*v[1]-u[1]*v[0]
+        if abs(cross)>1e-9:
+            w=[c[0]-a[0],c[1]-a[1]]
+            t=(w[0]*v[1]-w[1]*v[0])/cross
+            center=[a[0]+t*u[0],a[1]+t*u[1],0.25*(a[2]+b[2]+c[2]+d[2])]
+        else:
+            m1=[(a[i]+b[i])/2.0 for i in range(3)]; m2=[(c[i]+d[i])/2.0 for i in range(3)]
+            center=[(m1[i]+m2[i])/2.0 for i in range(3)]
+        au=math.atan2(u[1],u[0]); av=math.atan2(v[1],v[0])
         diff=(av-au+math.pi)%(2*math.pi)-math.pi
         if abs(diff)>math.pi/2: diff=diff-math.copysign(math.pi,diff)
         radius=max(6.0,min(16.0,0.18*(math.hypot(u[0],u[1])+math.hypot(v[0],v[1]))))
