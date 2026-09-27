@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "definition_version": "1.0.0",
+  "definition_version": "1.1.0",
   "segments": [
     "L1-L2",
     "L2-L3",
@@ -80,6 +80,18 @@
       "scope": "dynamic_segment",
       "unit": "deg",
       "calibration_required": false
+    },
+    {
+      "id": "DISC_HEIGHT_CENTRAL_ORTHO",
+      "scope": "segment",
+      "unit": "mm",
+      "calibration_required": true
+    },
+    {
+      "id": "PROJECTED_DISC_AREA",
+      "scope": "segment",
+      "unit": "mm2",
+      "calibration_required": true
     }
   ]
 }
