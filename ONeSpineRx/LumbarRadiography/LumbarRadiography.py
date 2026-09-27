@@ -7,10 +7,10 @@ from slicer.ScriptedLoadableModule import *
 from slicer.util import VTKObservationMixin
 try:
     from .one_spine_rx.measurements import projected_disc_geometry, projected_foraminal_geometry
-    from .one_spine_rx.geometry import sacral_reference_frame, point_in_frame_2d
+    from .one_spine_rx.geometry import sacral_reference_frame, point_in_frame_2d, spinopelvic_geometry_2d
 except (ImportError, ValueError):
     from one_spine_rx.measurements import projected_disc_geometry, projected_foraminal_geometry
-    from one_spine_rx.geometry import sacral_reference_frame, point_in_frame_2d
+    from one_spine_rx.geometry import sacral_reference_frame, point_in_frame_2d, spinopelvic_geometry_2d
 
 TRANSLATIONS = {
     "es": {
@@ -676,7 +676,9 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             if all(q(x) for x in ("L4 SA","L4 SP","S1 SA","S1 SP")): r["LL_L4_S1_deg"]=self.angleBetween(q("L4 SA"),q("L4 SP"),q("S1 SA"),q("S1 SP"))
             if all(q(x) for x in ("S1 SA","S1 SP")):
                 import math
-                sa,sp=q("S1 SA"),q("S1 SP"); r["SS_deg"]=abs(math.degrees(math.atan2(sp[1]-sa[1],sp[0]-sa[0])))
+                sa,sp=q("S1 SA"),q("S1 SP")
+                # SS is retained for backward compatibility, but remains image-frame dependent.
+                r["SS_deg"]=abs(math.degrees(math.atan2(sp[1]-sa[1],sp[0]-sa[0])))
             for upper,lower in zip(("L1","L2","L3","L4","L5"),("L2","L3","L4","L5","S1")):
                 needed=(upper+" IA",upper+" IP",lower+" SA",lower+" SP")
                 if all(q(x) for x in needed):
@@ -693,12 +695,16 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
                         r["DH_"+upper+"_"+lower+"_posterior_mm"]=dist(up,lp)*factor
                         r["DH_"+upper+"_"+lower+"_mean_mm"]=0.5*(dist(ua,la)+dist(up,lp))*factor
             if key=="lat" and all(q(x) for x in ("S1 SA","S1 SP","FH_R_CENTER","FH_L_CENTER")):
-                import math
-                sa,sp=q("S1 SA"),q("S1 SP"); sm=((sa[0]+sp[0])/2.0,(sa[1]+sp[1])/2.0)
-                fr,fl=q("FH_R_CENTER"),q("FH_L_CENTER"); fh=((fr[0]+fl[0])/2.0,(fr[1]+fl[1])/2.0)
-                dx,dy=sp[0]-sa[0],sp[1]-sa[1]; vx,vy=sm[0]-fh[0],sm[1]-fh[1]
-                r["PT_deg"]=abs(math.degrees(math.atan2(vx,vy)))
-                nx,ny=-dy,dx; hx,hy=fh[0]-sm[0],fh[1]-sm[1]; r["PI_deg"]=abs(math.degrees(math.atan2(nx*hy-ny*hx,nx*hx+ny*hy)))
+                fr,fl=q("FH_R_CENTER"),q("FH_L_CENTER")
+                fh=((fr[0]+fl[0])/2.0,(fr[1]+fl[1])/2.0)
+                pelvic=spinopelvic_geometry_2d(q("S1 SA"),q("S1 SP"),fh)
+                r["SS_deg"]=pelvic["SS_deg"]
+                r["PT_deg"]=pelvic["PT_deg"]
+                r["PI_deg"]=pelvic["PI_deg"]
+                r["PI_identity_error_deg"]=pelvic["PI_identity_error_deg"]
+                r["spinopelvic_debug"]=pelvic["debug"]
+                r["spinopelvic_reference_frame"]=pelvic["reference_frame"]
+                r["spinopelvic_reference_frame_validated"]=pelvic["reference_frame_validated"]
             results[key]=r
         dyn={}
         for name in set(results.get("flex",{})).intersection(results.get("ext",{})):
