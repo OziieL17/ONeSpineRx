@@ -24,7 +24,7 @@ TRANSLATIONS = {
         "noVolume":"Seleccione un volumen para esta proyección.",
         "ready":"Seleccione las cuatro proyecciones y pulse Iniciar registro en la proyección que desea medir.",
         "complete":"Registro finalizado. Revise los puntos antes de calcular o exportar.", "results":"Resultados", "calculate":"Calcular medidas", "copy":"Copiar valores", "figure":"Generar imagen",
-        "skipped":"Omitido", "calibration":"Calibración milimétrica por proyección", "calibrate":"Calibrar", "knownLength":"Longitud conocida (mm)", "orientation":"Orientación sagital", "anteriorLeft":"Anterior a la izquierda", "anteriorRight":"Anterior a la derecha", "debug":"Depuración traslación", "debugRun":"Depurar segmento",
+        "skipped":"Omitido", "saveJson":"Guardar JSON", "saveProject":"Guardar proyecto", "calibration":"Calibración milimétrica por proyección", "calibrate":"Calibrar", "knownLength":"Longitud conocida (mm)", "orientation":"Orientación sagital", "anteriorLeft":"Anterior a la izquierda", "anteriorRight":"Anterior a la derecha", "debug":"Depuración traslación", "debugRun":"Depurar segmento",
     },
     "en": {
         "study":"Radiographic study", "language":"Language", "ap":"AP", "lat":"Neutral lateral",
@@ -37,7 +37,7 @@ TRANSLATIONS = {
         "noVolume":"Select a volume for this projection.",
         "ready":"Select all four projections and press Start registration on the projection you want to measure.",
         "complete":"Registration finished. Review landmarks before calculation or export.", "results":"Results", "calculate":"Calculate measurements", "copy":"Copy values", "figure":"Generate image",
-        "skipped":"Skipped", "calibration":"Millimetric calibration by projection", "calibrate":"Calibrate", "knownLength":"Known length (mm)", "orientation":"Sagittal orientation", "anteriorLeft":"Anterior on left", "anteriorRight":"Anterior on right", "debug":"Translation debug", "debugRun":"Debug segment",
+        "skipped":"Skipped", "saveJson":"Save JSON", "saveProject":"Save project", "calibration":"Millimetric calibration by projection", "calibrate":"Calibrate", "knownLength":"Known length (mm)", "orientation":"Sagittal orientation", "anteriorLeft":"Anterior on left", "anteriorRight":"Anterior on right", "debug":"Translation debug", "debugRun":"Debug segment",
     },
 }
 
@@ -187,8 +187,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.visualizationSettings={key:VisualizationSettings() for key in ("lat","flex","ext")}
 
         self.resultsBox=qt.QGroupBox(); resultsLayout=qt.QVBoxLayout(self.resultsBox)
-        resultButtons=qt.QHBoxLayout(); self.calculateButton=qt.QPushButton(); self.copyButton=qt.QPushButton(); self.figureButton=qt.QPushButton()
-        resultButtons.addWidget(self.calculateButton); resultButtons.addWidget(self.copyButton); resultButtons.addWidget(self.figureButton); resultsLayout.addLayout(resultButtons)
+        resultButtons=qt.QHBoxLayout(); self.calculateButton=qt.QPushButton(); self.copyButton=qt.QPushButton(); self.figureButton=qt.QPushButton(); self.saveJsonButton=qt.QPushButton(); self.saveProjectButton=qt.QPushButton()\n        resultButtons.addWidget(self.calculateButton); resultButtons.addWidget(self.copyButton); resultButtons.addWidget(self.figureButton); resultButtons.addWidget(self.saveJsonButton); resultButtons.addWidget(self.saveProjectButton); resultsLayout.addLayout(resultButtons)
         self.resultsText=qt.QTextEdit(); self.resultsText.readOnly=True; self.resultsText.minimumHeight=180; resultsLayout.addWidget(self.resultsText)
         self.layout.addWidget(self.resultsBox); self.lastResults={}
         self.debugBox=qt.QGroupBox(); dbg=qt.QVBoxLayout(self.debugBox); dbgRow=qt.QHBoxLayout()
@@ -198,7 +197,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.debugButton=qt.QPushButton(); dbgRow.addWidget(self.debugProjection); dbgRow.addWidget(self.debugSegment); dbgRow.addWidget(self.debugButton); dbg.addLayout(dbgRow)
         self.debugText=qt.QTextEdit(); self.debugText.readOnly=True; self.debugText.minimumHeight=160; dbg.addWidget(self.debugText); self.layout.addWidget(self.debugBox)
         self.debugButton.connect("clicked()",self.debugTranslation)
-        self.calculateButton.connect("clicked()",self.calculateMeasurements); self.copyButton.connect("clicked()",self.copyResults); self.figureButton.connect("clicked()",self.generateFigure)
+        self.calculateButton.connect("clicked()",self.calculateMeasurements); self.copyButton.connect("clicked()",self.copyResults); self.figureButton.connect("clicked()",self.generateFigure); self.saveJsonButton.connect("clicked()",self.saveJson); self.saveProjectButton.connect("clicked()",self.saveProject)
         self.previousButton.connect("clicked()",self.previousLandmark); self.nextButton.connect("clicked()",self.nextLandmark); self.skipButton.connect("clicked()",self.skipCurrent); self.editButton.connect("clicked()",self.editCurrent); self.saveButton.connect("clicked()",self.saveChanges); self.finishButton.connect("clicked()",self.finishRegistration)
         self.languageCombo.connect("currentIndexChanged(int)",self.changeLanguage)
         self.applyLanguage(); self.layout.addStretch(1)
@@ -216,7 +215,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             getattr(self,key+"Label").text=self.tr(key)
             getattr(self,key+"StartButton").text=self.tr("start")
         self.previousButton.text=self.tr("previous"); self.nextButton.text=self.tr("next"); self.skipButton.text=self.tr("skip"); self.editButton.text=self.tr("edit"); self.saveButton.text=self.tr("save"); self.finishButton.text=self.tr("finish")
-        self.calibrateButton.text=self.tr("calibrate"); self.calculateButton.text=self.tr("calculate"); self.copyButton.text=self.tr("copy"); self.figureButton.text=self.tr("figure")
+        self.calibrateButton.text=self.tr("calibrate"); self.calculateButton.text=self.tr("calculate"); self.copyButton.text=self.tr("copy"); self.figureButton.text=self.tr("figure"); self.saveJsonButton.text=self.tr("saveJson"); self.saveProjectButton.text=self.tr("saveProject")
         if self.activeProjection is None: self.currentLabel.text=self.tr("ready"); self.helpLabel.text=""; self.progressLabel.text=""
 
     def labels(self,key):
@@ -668,6 +667,31 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         if not self.lastResults: self.calculateMeasurements()
         qt.QApplication.clipboard().setText(json.dumps(self.lastResults,indent=2,ensure_ascii=False))
 
+    def saveJson(self):
+        if not self.lastResults: self.calculateMeasurements()
+        path=qt.QFileDialog.getSaveFileName(slicer.util.mainWindow(),"Guardar resultados JSON","ONeSpineRx_results.json","JSON (*.json)")
+        if not path: return
+        with open(path,"w",encoding="utf-8") as stream: json.dump(self.lastResults,stream,indent=2,ensure_ascii=False)
+        slicer.util.infoDisplay("JSON guardado:\n"+path)
+
+    def saveProject(self):
+        import os, datetime
+        if not self.lastResults: self.calculateMeasurements()
+        root=qt.QFileDialog.getExistingDirectory(slicer.util.mainWindow(),"Guardar registro de proyecto ONeSpineRx")
+        if not root: return
+        stamp=datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        directory=os.path.join(root,"ONeSpineRx_Lumbar_"+stamp); os.makedirs(directory,exist_ok=True)
+        resultsDir=os.path.join(directory,"results"); markupsDir=os.path.join(directory,"markups"); os.makedirs(resultsDir,exist_ok=True); os.makedirs(markupsDir,exist_ok=True)
+        with open(os.path.join(resultsDir,"results.json"),"w",encoding="utf-8") as stream: json.dump(self.lastResults,stream,indent=2,ensure_ascii=False)
+        self.exportGeneralReport(os.path.join(resultsDir,"General_Report.txt"))
+        savedMarkups={}
+        for key,node in self.markupNodes.items():
+            path=os.path.join(markupsDir,self.PREFIX[key]+".mrk.json")
+            if slicer.util.saveNode(node,path): savedMarkups[key]=os.path.relpath(path,directory)
+        manifest={"schema_version":"1.1.0","measurement_definition_version":self.logic.DEFINITION_VERSION,"created":datetime.datetime.now().isoformat(),"markups":savedMarkups,"calibrations":self.calibrations,"pelvic_reference":self.lastResults.get("pelvic_reference",{}),"results":"results/results.json","report":"results/General_Report.txt"}
+        with open(os.path.join(directory,"manifest.json"),"w",encoding="utf-8") as stream: json.dump(manifest,stream,indent=2,ensure_ascii=False)
+        slicer.util.infoDisplay("Proyecto guardado:\n"+directory)
+
     def clearMeasurementOverlays(self):
         for node in list(slicer.util.getNodesByClass("vtkMRMLMarkupsNode")):
             if node.GetAttribute("ONeSpineRx.MeasurementOverlay")=="1": slicer.mrmlScene.RemoveNode(node)
@@ -880,7 +904,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         slicer.util.infoDisplay("Exportación completada: %d imágenes individuales + results.json + General_Report.txt" % len(exported))
 
 class LumbarRadiographyLogic(ScriptedLoadableModuleLogic):
-    DEFINITION_VERSION="1.8.1"
+    DEFINITION_VERSION="1.8.2"
     def createLandmarkNode(self,name):
         node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode",name); node.SetDescription("ONeSpineRx manual anatomical landmarks"); return node
     def saveMarkups(self,node,filePath):
