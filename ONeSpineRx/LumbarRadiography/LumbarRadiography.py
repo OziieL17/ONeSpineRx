@@ -512,9 +512,10 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         ux,uy=dx/ap,dy/ap; vx,vy=-uy,ux; rx,ry=pa_ref[0]-pb_ref[0],pa_ref[1]-pb_ref[1]; t=rx*ux+ry*uy
         if not math.isfinite(t): base["invalid_reason"]="non_finite_projection"; return base
         pct=100.0*t/ap; factor=self.calibrationFactor(key)
-        expected=self.orientationCombo.itemData(self.orientationCombo.currentIndex); observed="right" if dx>0 else "left"
+        dxw,dyw=pant[0]-pb[0],pant[1]-pb[1]; apw=math.hypot(dxw,dyw); uxw,uyw=dxw/apw,dyw/apw; vxw,vyw=-uyw,uxw
+        expected=self.orientationCombo.itemData(self.orientationCombo.currentIndex); observed="right" if dxw>0 else "left"
         orientationOK=(expected==observed)
-        base.update({"measurement_valid":orientationOK,"invalid_reason":None if orientationOK else "anterior_posterior_orientation_mismatch","P_A":list(pa),"P_B":list(pb),"P_anterior":list(pant),"P_A_pelvic":list(pa_ref),"P_B_pelvic":list(pb_ref),"P_anterior_pelvic":list(pant_ref),"reference_frame":"pelvic_sacral_S1","pelvic_reference":ref,"u":[ux,uy],"v":[vx,vy],"AP_reference_scene":ap,"translation_scene":t,"translation_pct":pct,"orientation_expected":expected,"orientation_observed":observed,"orientation_qc":orientationOK})
+        base.update({"measurement_valid":orientationOK,"invalid_reason":None if orientationOK else "anterior_posterior_orientation_mismatch","P_A":list(pa),"P_B":list(pb),"P_anterior":list(pant),"P_A_pelvic":list(pa_ref),"P_B_pelvic":list(pb_ref),"P_anterior_pelvic":list(pant_ref),"reference_frame":"pelvic_sacral_S1","pelvic_reference":ref,"u":[uxw,uyw],"v":[vxw,vyw],"u_pelvic":[ux,uy],"v_pelvic":[vx,vy],"AP_reference_scene":ap,"translation_scene":t,"translation_pct":pct,"orientation_expected":expected,"orientation_observed":observed,"orientation_qc":orientationOK})
         if factor is not None: base["translation_mm"]=t*factor; base["AP_reference_mm"]=ap*factor
         return base
 
@@ -536,7 +537,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
     def debugTranslation(self):
         key=self.debugProjection.itemData(self.debugProjection.currentIndex); segment=self.debugSegment.itemData(self.debugSegment.currentIndex); upper,lower=segment.split("-")
         m=self.translationMeasurement(key,upper,lower); lines=["%s %s" % (self.PREFIX[key],segment)]
-        for name in ("P_A","P_B","P_anterior","P_A_pelvic","P_B_pelvic","P_anterior_pelvic","reference_frame","pelvic_reference","u","v","AP_reference_scene","translation_scene","translation_mm","translation_pct","calibration_valid","orientation_expected","orientation_observed","orientation_qc","measurement_valid","invalid_reason"): lines.append("%s = %s" % (name,m.get(name)))
+        for name in ("P_A","P_B","P_anterior","P_A_pelvic","P_B_pelvic","P_anterior_pelvic","reference_frame","pelvic_reference","u","v","u_pelvic","v_pelvic","AP_reference_scene","translation_scene","translation_mm","translation_pct","calibration_valid","orientation_expected","orientation_observed","orientation_qc","measurement_valid","invalid_reason"): lines.append("%s = %s" % (name,m.get(name)))
         self.debugText.plainText="\n".join(lines)
         if m.get("measurement_valid"): self.buildTranslationOverlay(key,upper,lower,m)
 
