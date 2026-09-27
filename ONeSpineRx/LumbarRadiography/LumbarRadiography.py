@@ -6,6 +6,7 @@ import ctk
 from slicer.ScriptedLoadableModule import *
 from slicer.util import VTKObservationMixin
 from ONeSpineRx.LumbarRadiography.one_spine_rx.measurements import projected_disc_geometry
+from ONeSpineRx.LumbarRadiography.one_spine_rx.geometry import sacral_reference_frame, point_in_frame_2d
 
 TRANSLATIONS = {
     "es": {
@@ -466,6 +467,34 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         angle=abs(math.degrees(math.atan2(ux*vy-uy*vx,ux*vx+uy*vy)))%180.0
         return min(angle,180.0-angle)
 
+    def pelvicReferenceFrame(self,key):
+        p=self.pointMap(key); prefix=self.PREFIX[key]
+        sp=p.get(prefix+" S1 SP"); sa=p.get(prefix+" S1 SA")
+        if sp is None or sa is None:
+            return {"reference_frame_valid":False,"invalid_reason":"s1_superior_endplate_unavailable"}
+        try:
+            frame=sacral_reference_frame(sp,sa)
+        except ValueError as exc:
+            return {"reference_frame_valid":False,"invalid_reason":str(exc)}
+        return {"reference_frame_valid":True,"invalid_reason":None,"origin":list(frame["origin"]),"u":list(frame["u"]),"v":list(frame["v"])}
+
+    def pelvicReferenceCoordinates(self,key,point):
+        ref=self.pelvicReferenceFrame(key)
+        if not ref.get("reference_frame_valid"): return None
+        frame={"origin":tuple(ref["origin"]),"u":tuple(ref["u"]),"v":tuple(ref["v"])}
+        return point_in_frame_2d(point,frame)
+
+    def calculatePelvicReference(self):
+        out={}
+        for key in ("lat","flex","ext"):
+            ref=self.pelvicReferenceFrame(key)
+            ref["projection"]=key
+            ref["coordinate_definition"]="origin=S1 midpoint; +u=S1 posterior-to-anterior; +v=orthogonal"
+            out[key]=ref
+        neutral=self.lastResults.get("lat",{}) if self.lastResults else {}
+        out["pi_consistency_qc"]={"available":False,"reason":"PI currently requires reliable femoral-head landmarks in each compared projection","delta_PI_deg":None}
+        return out
+
     def translationMeasurement(self,key,upper,lower):
         import math
         p=self.pointMap(key); prefix=self.PREFIX[key]; q=lambda name: p.get(prefix+" "+name)
@@ -475,14 +504,17 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         pa,pb,pant=q(upper+" IP"),q(lower+" SP"),q(lower+" SA")
         values=pa+pb+pant
         if not all(math.isfinite(x) for x in values): base["invalid_reason"]="non_finite_coordinates"; return base
-        dx,dy=pant[0]-pb[0],pant[1]-pb[1]; ap=math.hypot(dx,dy)
+        ref=self.pelvicReferenceFrame(key)
+        if not ref.get("reference_frame_valid"): base["invalid_reason"]="pelvic_reference_unavailable:"+str(ref.get("invalid_reason")); return base
+        pa_ref=self.pelvicReferenceCoordinates(key,pa); pb_ref=self.pelvicReferenceCoordinates(key,pb); pant_ref=self.pelvicReferenceCoordinates(key,pant)
+        dx,dy=pant_ref[0]-pb_ref[0],pant_ref[1]-pb_ref[1]; ap=math.hypot(dx,dy)
         if ap<=1e-9: base["invalid_reason"]="invalid_AP_reference"; return base
-        ux,uy=dx/ap,dy/ap; vx,vy=-uy,ux; rx,ry=pa[0]-pb[0],pa[1]-pb[1]; t=rx*ux+ry*uy
+        ux,uy=dx/ap,dy/ap; vx,vy=-uy,ux; rx,ry=pa_ref[0]-pb_ref[0],pa_ref[1]-pb_ref[1]; t=rx*ux+ry*uy
         if not math.isfinite(t): base["invalid_reason"]="non_finite_projection"; return base
         pct=100.0*t/ap; factor=self.calibrationFactor(key)
         expected=self.orientationCombo.itemData(self.orientationCombo.currentIndex); observed="right" if dx>0 else "left"
         orientationOK=(expected==observed)
-        base.update({"measurement_valid":orientationOK,"invalid_reason":None if orientationOK else "anterior_posterior_orientation_mismatch","P_A":list(pa),"P_B":list(pb),"P_anterior":list(pant),"u":[ux,uy],"v":[vx,vy],"AP_reference_scene":ap,"translation_scene":t,"translation_pct":pct,"orientation_expected":expected,"orientation_observed":observed,"orientation_qc":orientationOK})
+        base.update({"measurement_valid":orientationOK,"invalid_reason":None if orientationOK else "anterior_posterior_orientation_mismatch","P_A":list(pa),"P_B":list(pb),"P_anterior":list(pant),"P_A_pelvic":list(pa_ref),"P_B_pelvic":list(pb_ref),"P_anterior_pelvic":list(pant_ref),"reference_frame":"pelvic_sacral_S1","pelvic_reference":ref,"u":[ux,uy],"v":[vx,vy],"AP_reference_scene":ap,"translation_scene":t,"translation_pct":pct,"orientation_expected":expected,"orientation_observed":observed,"orientation_qc":orientationOK})
         if factor is not None: base["translation_mm"]=t*factor; base["AP_reference_mm"]=ap*factor
         return base
 
@@ -504,7 +536,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
     def debugTranslation(self):
         key=self.debugProjection.itemData(self.debugProjection.currentIndex); segment=self.debugSegment.itemData(self.debugSegment.currentIndex); upper,lower=segment.split("-")
         m=self.translationMeasurement(key,upper,lower); lines=["%s %s" % (self.PREFIX[key],segment)]
-        for name in ("P_A","P_B","P_anterior","u","v","AP_reference_scene","translation_scene","translation_mm","translation_pct","calibration_valid","orientation_expected","orientation_observed","orientation_qc","measurement_valid","invalid_reason"): lines.append("%s = %s" % (name,m.get(name)))
+        for name in ("P_A","P_B","P_anterior","P_A_pelvic","P_B_pelvic","P_anterior_pelvic","reference_frame","pelvic_reference","u","v","AP_reference_scene","translation_scene","translation_mm","translation_pct","calibration_valid","orientation_expected","orientation_observed","orientation_qc","measurement_valid","invalid_reason"): lines.append("%s = %s" % (name,m.get(name)))
         self.debugText.plainText="\n".join(lines)
         if m.get("measurement_valid"): self.buildTranslationOverlay(key,upper,lower,m)
 
@@ -589,6 +621,8 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             if name.endswith("_deg"): dyn["delta_"+name]=abs(results["flex"][name]-results["ext"][name])
         results["dynamic"]=dyn
         results["translation"]=self.calculateTranslations()
+        self.lastResults=results
+        results["pelvic_reference"]=self.calculatePelvicReference()
         discGeometry={}
         for upper,lower in zip(("L1","L2","L3","L4","L5"),("L2","L3","L4","L5","S1")):
             level=upper+"_"+lower; discGeometry[level]={}
@@ -616,7 +650,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         for section,data in results.items():
             lines.append("["+section.upper()+"]")
             if section in ("lat","flex","ext","dynamic"): lines.extend("%s = %.2f" % (name,value) for name,value in data.items())
-            elif section in ("validity","pelvic_validity","visualization","disc_geometry"): lines.append(json.dumps(data,ensure_ascii=False))
+            elif section in ("validity","pelvic_validity","visualization","disc_geometry","pelvic_reference"): lines.append(json.dumps(data,ensure_ascii=False))
             else:
                 for level,item in data.items(): lines.append("%s: neutral=%s%% flex=%s%% ext=%s%% delta=%s%%" % (level, self.fmt(item.get("neutral_pct")), self.fmt(item.get("flex_pct")), self.fmt(item.get("ext_pct")), self.fmt(item.get("delta_flex_ext_pct"))))
             lines.append("")
@@ -786,6 +820,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         lines+=["","6. CONTROL DE CALIDAD"]
         for key in ("lat","flex","ext"):
             cal=self.calibrations.get(key); lines.append("%s: calibración %s" % (self.PREFIX[key],"verificada" if cal and cal.get("verified") else "no verificada"))
+            pref=r.get("pelvic_reference",{}).get(key,{}); lines.append("%s: marco sacro S1 %s" % (self.PREFIX[key],"válido" if pref.get("reference_frame_valid") else "no disponible"))
         lines+=["","Nota: NA indica medición no disponible. El informe conserva datos objetivos; no emite interpretación clínica automática."]
         with open(path,"w",encoding="utf-8") as stream: stream.write("\n".join(lines))
         return path
@@ -840,7 +875,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         slicer.util.infoDisplay("Exportación completada: %d imágenes individuales + results.json + General_Report.txt" % len(exported))
 
 class LumbarRadiographyLogic(ScriptedLoadableModuleLogic):
-    DEFINITION_VERSION="1.7.0"
+    DEFINITION_VERSION="1.8.0"
     def createLandmarkNode(self,name):
         node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode",name); node.SetDescription("ONeSpineRx manual anatomical landmarks"); return node
     def saveMarkups(self,node,filePath):
