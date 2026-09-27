@@ -5,6 +5,7 @@ import vtk
 import ctk
 from slicer.ScriptedLoadableModule import *
 from slicer.util import VTKObservationMixin
+from ONeSpineRx.LumbarRadiography.one_spine_rx.measurements import projected_disc_geometry
 
 TRANSLATIONS = {
     "es": {
@@ -588,6 +589,23 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             if name.endswith("_deg"): dyn["delta_"+name]=abs(results["flex"][name]-results["ext"][name])
         results["dynamic"]=dyn
         results["translation"]=self.calculateTranslations()
+        discGeometry={}
+        for upper,lower in zip(("L1","L2","L3","L4","L5"),("L2","L3","L4","L5","S1")):
+            level=upper+"_"+lower; discGeometry[level]={}
+            for key in ("lat","flex","ext"):
+                p=self.pointMap(key); prefix=self.PREFIX[key]; q=lambda name,p=p,prefix=prefix:p.get(prefix+" "+name)
+                needed=(upper+" IA",upper+" IP",lower+" SA",lower+" SP")
+                if not all(q(x) is not None for x in needed):
+                    discGeometry[level][key]={"measurement_valid":False,"measurement_status":"invalid","invalid_reason":"required_landmarks_unavailable","projection_quality":None,"projection_invalid_reason":None,"debug":{}}
+                    continue
+                try:
+                    item=projected_disc_geometry(q(upper+" IA"),q(upper+" IP"),q(lower+" SA"),q(lower+" SP"),self.calibrationFactor(key))
+                    item["projection_quality"]=None
+                    item["projection_invalid_reason"]=None
+                    discGeometry[level][key]=item
+                except ValueError as exc:
+                    discGeometry[level][key]={"measurement_valid":False,"measurement_status":"invalid","invalid_reason":str(exc),"projection_quality":None,"projection_invalid_reason":None,"debug":{}}
+        results["disc_geometry"]=discGeometry
         results["validity"]=self.measurementValidity(results)
         results["pelvic_validity"]=self.pelvicValidity()
         settings=self.readVisualizationSettings()
@@ -598,7 +616,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         for section,data in results.items():
             lines.append("["+section.upper()+"]")
             if section in ("lat","flex","ext","dynamic"): lines.extend("%s = %.2f" % (name,value) for name,value in data.items())
-            elif section in ("validity","pelvic_validity","visualization"): lines.append(json.dumps(data,ensure_ascii=False))
+            elif section in ("validity","pelvic_validity","visualization","disc_geometry"): lines.append(json.dumps(data,ensure_ascii=False))
             else:
                 for level,item in data.items(): lines.append("%s: neutral=%s%% flex=%s%% ext=%s%% delta=%s%%" % (level, self.fmt(item.get("neutral_pct")), self.fmt(item.get("flex_pct")), self.fmt(item.get("ext_pct")), self.fmt(item.get("delta_flex_ext_pct"))))
             lines.append("")
@@ -822,7 +840,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         slicer.util.infoDisplay("Exportación completada: %d imágenes individuales + results.json + General_Report.txt" % len(exported))
 
 class LumbarRadiographyLogic(ScriptedLoadableModuleLogic):
-    DEFINITION_VERSION="1.6.0"
+    DEFINITION_VERSION="1.7.0"
     def createLandmarkNode(self,name):
         node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode",name); node.SetDescription("ONeSpineRx manual anatomical landmarks"); return node
     def saveMarkups(self,node,filePath):
