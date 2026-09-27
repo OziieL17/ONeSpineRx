@@ -71,3 +71,49 @@ def point_in_frame_2d(point: Point, frame):
 def vector_in_frame_2d(vector_: Point, frame):
     """Components of a free vector in an orthonormal 2D frame."""
     return dot2(vector_, frame["u"]), dot2(vector_, frame["v"])
+
+
+def spinopelvic_geometry_2d(s1_anterior: Point, s1_posterior: Point, femoral_center: Point):
+    """Projected spinopelvic geometry in a common 2D image frame.
+
+    PI is treated as an unoriented line angle to remove the supplementary-angle
+    ambiguity of the S1 normal. SS and PT remain image-frame dependent and
+    therefore require a trustworthy radiographic horizontal/vertical reference
+    for clinical interpretation.
+    """
+    s = midpoint(s1_anterior, s1_posterior)
+    u_s1 = normalize2((s1_anterior[0]-s1_posterior[0], s1_anterior[1]-s1_posterior[1]))
+    n_s1 = (-u_s1[1], u_s1[0])
+    s_to_h = normalize2((femoral_center[0]-s[0], femoral_center[1]-s[1]))
+    h_to_s = (-s_to_h[0], -s_to_h[1])
+
+    # PI is the smaller angle between the S1 normal line and S-H line.
+    pi = math.degrees(math.acos(max(-1.0, min(1.0, abs(dot2(n_s1, s_to_h))))))
+
+    # Image-frame horizontal/vertical. These are valid only when that frame has
+    # been established as the true radiographic frame.
+    horizontal = (1.0, 0.0)
+    vertical = (0.0, 1.0)
+    ss = math.degrees(math.acos(max(-1.0, min(1.0, abs(dot2(u_s1, horizontal))))))
+    pt = math.degrees(math.acos(max(-1.0, min(1.0, abs(dot2(h_to_s, vertical))))))
+
+    identity_error = abs(pi - (pt + ss))
+    return {
+        "PI_deg": pi,
+        "PT_deg": pt,
+        "SS_deg": ss,
+        "PI_identity_error_deg": identity_error,
+        "identity_consistent": identity_error <= 1e-6,
+        "reference_frame": "image_xy",
+        "reference_frame_validated": False,
+        "debug": {
+            "S1_midpoint": list(s),
+            "femoral_center": [float(femoral_center[0]), float(femoral_center[1])],
+            "u_S1": list(u_s1),
+            "n_S1": list(n_s1),
+            "S_to_H": list(s_to_h),
+            "H_to_S": list(h_to_s),
+            "horizontal_reference": list(horizontal),
+            "vertical_reference": list(vertical),
+        },
+    }
