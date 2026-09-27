@@ -6,10 +6,10 @@ import ctk
 from slicer.ScriptedLoadableModule import *
 from slicer.util import VTKObservationMixin
 try:
-    from .one_spine_rx.measurements import projected_disc_geometry
+    from .one_spine_rx.measurements import projected_disc_geometry, projected_foraminal_geometry
     from .one_spine_rx.geometry import sacral_reference_frame, point_in_frame_2d
 except (ImportError, ValueError):
-    from one_spine_rx.measurements import projected_disc_geometry
+    from one_spine_rx.measurements import projected_disc_geometry, projected_foraminal_geometry
     from one_spine_rx.geometry import sacral_reference_frame, point_in_frame_2d
 
 TRANSLATIONS = {
@@ -93,6 +93,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         VTKObservationMixin.__init__(self)
         self.logic=None; self.lang="es"; self.activeProjection=None
         self.markupNodes={}; self.indices={k:0 for k in self.PROJECTION_KEYS}; self.skipped={k:[] for k in self.PROJECTION_KEYS}; self.markupObserverTags={}
+        self.foraminalNodes={}; self.foraminalObserverTags={}; self.activeForamen=None; self.foraminalQC={}
 
     def setup(self):
         ScriptedLoadableModuleWidget.setup(self); self.logic=LumbarRadiographyLogic()
@@ -185,6 +186,22 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         self.dynamicComparisonCheck=qt.QCheckBox("Generar Dynamic comparison"); self.dynamicComparisonCheck.checked=False; vis.addWidget(self.dynamicComparisonCheck)
         self.layout.addWidget(self.visualizationBox)
         self.visualizationSettings={key:VisualizationSettings() for key in ("lat","flex","ext")}
+
+        self.foramenBox=ctk.ctkCollapsibleButton(); self.foramenBox.text="Geometría foraminal"; self.foramenBox.collapsed=True
+        fv=qt.QVBoxLayout(self.foramenBox); fr=qt.QHBoxLayout()
+        self.foramenProjection=qt.QComboBox()
+        for label,key in (("LAT","lat"),("FLEX","flex"),("EXT","ext")): self.foramenProjection.addItem(label,key)
+        self.foramenLevel=qt.QComboBox()
+        for level in VisualizationSettings.LEVELS: self.foramenLevel.addItem(level.replace("_","–"),level)
+        self.foramenSide=qt.QComboBox(); self.foramenSide.addItem("Izquierdo","LEFT"); self.foramenSide.addItem("Derecho","RIGHT")
+        self.foramenStartButton=qt.QPushButton("Registrar F_SUP/F_INF/F_ANT/F_POST")
+        fr.addWidget(self.foramenProjection); fr.addWidget(self.foramenLevel); fr.addWidget(self.foramenSide); fr.addWidget(self.foramenStartButton); fv.addLayout(fr)
+        qr=qt.QHBoxLayout(); qr.addWidget(qt.QLabel("Calidad de proyección:")); self.foramenQuality=qt.QComboBox()
+        self.foramenQuality.addItem("Sin evaluar",None); self.foramenQuality.addItem("Válida","valid"); self.foramenQuality.addItem("Limitada / provisional","limited"); self.foramenQuality.addItem("Inválida","invalid")
+        self.foramenQualityButton=qt.QPushButton("Guardar QC"); qr.addWidget(self.foramenQuality); qr.addWidget(self.foramenQualityButton); fv.addLayout(qr)
+        self.foramenStatus=qt.QLabel("Seleccione proyección, nivel y lado."); self.foramenStatus.wordWrap=True; fv.addWidget(self.foramenStatus)
+        self.layout.addWidget(self.foramenBox)
+        self.foramenStartButton.connect("clicked()",self.startForaminalRegistration); self.foramenQualityButton.connect("clicked()",self.saveForaminalQC)
 
         self.resultsBox=qt.QGroupBox(); resultsLayout=qt.QVBoxLayout(self.resultsBox)
         resultButtons=qt.QHBoxLayout(); self.calculateButton=qt.QPushButton(); self.copyButton=qt.QPushButton(); self.figureButton=qt.QPushButton(); self.saveJsonButton=qt.QPushButton(); self.saveProjectButton=qt.QPushButton()
@@ -527,7 +544,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         segments=(("L1","L2"),("L2","L3"),("L3","L4"),("L4","L5"),("L5","S1")); out={}
         for upper,lower in segments:
             name=upper+"_"+lower; n=self.translationMeasurement("lat",upper,lower); f=self.translationMeasurement("flex",upper,lower); e=self.translationMeasurement("ext",upper,lower)
-            item={"neutral_mm":n.get("translation_mm"),"neutral_pct":n.get("translation_pct"),"flex_mm":f.get("translation_mm"),"flex_pct":f.get("translation_pct"),"ext_mm":e.get("translation_mm"),"ext_pct":e.get("translation_pct"),"neutral":n,"flex":f,"ext":e}
+            item={"neutral_mm":n.get("translation_mm") if n.get("measurement_valid") else None,"neutral_pct":n.get("translation_pct") if n.get("measurement_valid") else None,"flex_mm":f.get("translation_mm") if f.get("measurement_valid") else None,"flex_pct":f.get("translation_pct") if f.get("measurement_valid") else None,"ext_mm":e.get("translation_mm") if e.get("measurement_valid") else None,"ext_pct":e.get("translation_pct") if e.get("measurement_valid") else None,"neutral":n,"flex":f,"ext":e}
             if f.get("measurement_valid") and e.get("measurement_valid"):
                 ds=e["translation_pct"]-f["translation_pct"]; item["delta_signed_pct"]=ds; item["delta_flex_ext_pct"]=abs(ds)
                 if f.get("translation_mm") is not None and e.get("translation_mm") is not None:
@@ -554,6 +571,68 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         if volume: slicer.util.setSliceViewerLayers(background=volume,fit=True)
         for projection,node in self.markupNodes.items():
             if node.GetDisplayNode(): node.GetDisplayNode().SetVisibility(projection==key)
+    def foraminalKey(self):
+        return (self.foramenProjection.itemData(self.foramenProjection.currentIndex), self.foramenLevel.itemData(self.foramenLevel.currentIndex), self.foramenSide.itemData(self.foramenSide.currentIndex))
+
+    def startForaminalRegistration(self):
+        key,level,side=self.foraminalKey(); volume=self.selectors[key].currentNode()
+        if volume is None:
+            slicer.util.errorDisplay("Seleccione el volumen sagital correspondiente."); return
+        ident=(key,level,side); name="ONeSpineRx_FORAMEN_%s_%s_%s" % (self.PREFIX[key],level,side)
+        old=self.foraminalNodes.get(ident)
+        if old is not None:
+            slicer.mrmlScene.RemoveNode(old)
+        node=self.logic.createLandmarkNode(name); node.SetAttribute("ONeSpineRx.Foramen","1"); node.SetAttribute("ONeSpineRx.Projection",key); node.SetAttribute("ONeSpineRx.Level",level); node.SetAttribute("ONeSpineRx.Side",side)
+        color=self.COLORS[key]; node.GetDisplayNode().SetSelectedColor(*color); node.GetDisplayNode().SetColor(*color); node.GetDisplayNode().SetTextScale(1.05)
+        self.foraminalNodes[ident]=node; self.activeForamen={"id":ident,"index":0,"labels":["F_SUP","F_INF","F_ANT","F_POST"]}
+        tag=node.AddObserver(slicer.vtkMRMLMarkupsNode.PointPositionDefinedEvent,self.onForaminalPointDefined); self.foraminalObserverTags[ident]=tag
+        slicer.util.setSliceViewerLayers(background=volume,fit=True); slicer.mrmlScene.SetActiveMRMLNodeID(node.GetID())
+        interaction=slicer.app.applicationLogic().GetInteractionNode(); interaction.SetPlaceModePersistence(1); interaction.SetCurrentInteractionMode(interaction.Place)
+        self.foramenStatus.text="%s %s %s — marque F_SUP" % (self.PREFIX[key],level.replace("_","–"),side)
+
+    def onForaminalPointDefined(self,caller,event):
+        state=self.activeForamen
+        if not state or caller is not self.foraminalNodes.get(state["id"]): return
+        i=state["index"]; labels=state["labels"]
+        if i>=len(labels): return
+        pointIndex=caller.GetNumberOfControlPoints()-1
+        if pointIndex>=0: caller.SetNthControlPointLabel(pointIndex,labels[i])
+        state["index"]=i+1
+        if state["index"]>=len(labels):
+            slicer.app.applicationLogic().GetInteractionNode().SetCurrentInteractionMode(slicer.vtkMRMLInteractionNode.ViewTransform)
+            key,level,side=state["id"]; self.foramenStatus.text="%s %s %s — landmarks completos; asigne QC." % (self.PREFIX[key],level.replace("_","–"),side); self.activeForamen=None
+        else:
+            self.foramenStatus.text="Siguiente: "+labels[state["index"]]
+
+    def saveForaminalQC(self):
+        ident=self.foraminalKey(); quality=self.foramenQuality.itemData(self.foramenQuality.currentIndex)
+        self.foraminalQC[ident]=quality
+        self.foramenStatus.text="%s %s %s — QC: %s" % (self.PREFIX[ident[0]],ident[1].replace("_","–"),ident[2],quality or "sin evaluar")
+
+    def foraminalPointMap(self,ident):
+        node=self.foraminalNodes.get(ident); out={}
+        if node is None: return out
+        for i in range(node.GetNumberOfControlPoints()):
+            label=node.GetNthControlPointLabel(i); p=[0.0,0.0,0.0]; node.GetNthControlPointPositionWorld(i,p); out[label]=tuple(p)
+        return out
+
+    def calculateForaminalGeometry(self):
+        out={}
+        for level in VisualizationSettings.LEVELS:
+            out[level]={}
+            for key in ("lat","flex","ext"):
+                out[level][key]={}
+                for side in ("LEFT","RIGHT"):
+                    ident=(key,level,side); p=self.foraminalPointMap(ident); needed=("F_SUP","F_INF","F_ANT","F_POST")
+                    if not all(x in p for x in needed):
+                        out[level][key][side]={"measurement_valid":False,"measurement_status":"invalid","invalid_reason":"required_foraminal_landmarks_unavailable","projection_quality":self.foraminalQC.get(ident),"debug":{}}
+                        continue
+                    try:
+                        out[level][key][side]=projected_foraminal_geometry(p["F_SUP"],p["F_INF"],p["F_ANT"],p["F_POST"],self.calibrationFactor(key),self.foraminalQC.get(ident))
+                    except ValueError as exc:
+                        out[level][key][side]={"measurement_valid":False,"measurement_status":"invalid","invalid_reason":str(exc),"projection_quality":self.foraminalQC.get(ident),"debug":{}}
+        return out
+
     def measurementValidity(self,results):
         validity={}
         for key in ("lat","flex","ext"):
@@ -645,6 +724,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
                 except ValueError as exc:
                     discGeometry[level][key]={"measurement_valid":False,"measurement_status":"invalid","invalid_reason":str(exc),"projection_quality":None,"projection_invalid_reason":None,"debug":{}}
         results["disc_geometry"]=discGeometry
+        results["foraminal_geometry"]=self.calculateForaminalGeometry()
         results["validity"]=self.measurementValidity(results)
         results["pelvic_validity"]=self.pelvicValidity()
         settings=self.readVisualizationSettings()
@@ -655,7 +735,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         for section,data in results.items():
             lines.append("["+section.upper()+"]")
             if section in ("lat","flex","ext","dynamic"): lines.extend("%s = %.2f" % (name,value) for name,value in data.items())
-            elif section in ("validity","pelvic_validity","visualization","disc_geometry","pelvic_reference"): lines.append(json.dumps(data,ensure_ascii=False))
+            elif section in ("validity","pelvic_validity","visualization","disc_geometry","foraminal_geometry","pelvic_reference"): lines.append(json.dumps(data,ensure_ascii=False))
             else:
                 for level,item in data.items(): lines.append("%s: neutral=%s%% flex=%s%% ext=%s%% delta=%s%%" % (level, self.fmt(item.get("neutral_pct")), self.fmt(item.get("flex_pct")), self.fmt(item.get("ext_pct")), self.fmt(item.get("delta_flex_ext_pct"))))
             lines.append("")
@@ -689,7 +769,11 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         for key,node in self.markupNodes.items():
             path=os.path.join(markupsDir,self.PREFIX[key]+".mrk.json")
             if slicer.util.saveNode(node,path): savedMarkups[key]=os.path.relpath(path,directory)
-        manifest={"schema_version":"1.1.0","measurement_definition_version":self.logic.DEFINITION_VERSION,"created":datetime.datetime.now().isoformat(),"markups":savedMarkups,"calibrations":self.calibrations,"pelvic_reference":self.lastResults.get("pelvic_reference",{}),"results":"results/results.json","report":"results/General_Report.txt"}
+        savedForaminal={}
+        for ident,node in self.foraminalNodes.items():
+            key,level,side=ident; path=os.path.join(markupsDir,"FORAMEN_%s_%s_%s.mrk.json" % (self.PREFIX[key],level,side))
+            if slicer.util.saveNode(node,path): savedForaminal["|".join(ident)]=os.path.relpath(path,directory)
+        manifest={"schema_version":"1.2.0","measurement_definition_version":self.logic.DEFINITION_VERSION,"created":datetime.datetime.now().isoformat(),"markups":savedMarkups,"foraminal_markups":savedForaminal,"foraminal_qc":{"|".join(k):v for k,v in self.foraminalQC.items()},"calibrations":self.calibrations,"pelvic_reference":self.lastResults.get("pelvic_reference",{}),"results":"results/results.json","report":"results/General_Report.txt"}
         with open(os.path.join(directory,"manifest.json"),"w",encoding="utf-8") as stream: json.dump(manifest,stream,indent=2,ensure_ascii=False)
         slicer.util.infoDisplay("Proyecto guardado:\n"+directory)
 
@@ -840,14 +924,20 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
                 v=n.get(key)
                 if v is not None: parts.append("%s: %.2f%s" % (label,v,unit))
             lines.append(" | ".join(parts))
-        lines+=["","4. TRASLACIÓN SAGITAL"]
+        lines+=["","4. GEOMETRÍA FORAMINAL"]
+        fg=r.get("foraminal_geometry",{})
+        for level in VisualizationSettings.LEVELS:
+            for side in ("LEFT","RIGHT"):
+                item=fg.get(level,{}).get("lat",{}).get(side,{})
+                lines.append("%s %s | estado: %s | QC: %s | FH: %s mm | FW: %s mm | área: %s mm²" % (level.replace("_","–"),side,item.get("measurement_status","invalid"),item.get("projection_quality") or "sin evaluar",self.fmt(item.get("FH_mm")),self.fmt(item.get("FW_mm")),self.fmt(item.get("projected_area_mm2"))))
+        lines+=["","5. TRASLACIÓN SAGITAL"]
         for level,item in r.get("translation",{}).items():
             lines.append("%s | Neutral: %s mm / %s%% | Flexión: %s mm / %s%% | Extensión: %s mm / %s%%" % (level.replace("_","–"),self.fmt(item.get("neutral_mm")),self.fmt(item.get("neutral_pct")),self.fmt(item.get("flex_mm")),self.fmt(item.get("flex_pct")),self.fmt(item.get("ext_mm")),self.fmt(item.get("ext_pct"))))
-        lines+=["","5. MOVILIDAD DINÁMICA"]
+        lines+=["","6. MOVILIDAD DINÁMICA"]
         for level,item in r.get("translation",{}).items():
             iva=r.get("dynamic",{}).get("delta_IVA_"+level+"_deg")
             lines.append("%s | ΔIVA: %s° | ΔT: %s mm / %s%%" % (level.replace("_","–"),self.fmt(iva),self.fmt(item.get("delta_flex_ext_mm")),self.fmt(item.get("delta_flex_ext_pct"))))
-        lines+=["","6. CONTROL DE CALIDAD"]
+        lines+=["","7. CONTROL DE CALIDAD"]
         for key in ("lat","flex","ext"):
             cal=self.calibrations.get(key); lines.append("%s: calibración %s" % (self.PREFIX[key],"verificada" if cal and cal.get("verified") else "no verificada"))
             pref=r.get("pelvic_reference",{}).get(key,{}); lines.append("%s: marco sacro S1 %s" % (self.PREFIX[key],"válido" if pref.get("reference_frame_valid") else "no disponible"))
@@ -905,7 +995,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         slicer.util.infoDisplay("Exportación completada: %d imágenes individuales + results.json + General_Report.txt" % len(exported))
 
 class LumbarRadiographyLogic(ScriptedLoadableModuleLogic):
-    DEFINITION_VERSION="1.8.2"
+    DEFINITION_VERSION="1.9.0"
     def createLandmarkNode(self,name):
         node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode",name); node.SetDescription("ONeSpineRx manual anatomical landmarks"); return node
     def saveMarkups(self,node,filePath):
