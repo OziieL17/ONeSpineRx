@@ -5,8 +5,7 @@ import vtk
 import ctk
 from slicer.ScriptedLoadableModule import *
 from slicer.util import VTKObservationMixin
-from ONeSpineRx.LumbarRadiography.one_spine_rx.measurements import projected_disc_geometry
-from ONeSpineRx.LumbarRadiography.one_spine_rx.geometry import sacral_reference_frame, point_in_frame_2d
+try:\n    from .one_spine_rx.measurements import projected_disc_geometry\n    from .one_spine_rx.geometry import sacral_reference_frame, point_in_frame_2d\nexcept (ImportError, ValueError):\n    from one_spine_rx.measurements import projected_disc_geometry\n    from one_spine_rx.geometry import sacral_reference_frame, point_in_frame_2d
 
 TRANSLATIONS = {
     "es": {
@@ -876,7 +875,7 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         slicer.util.infoDisplay("Exportación completada: %d imágenes individuales + results.json + General_Report.txt" % len(exported))
 
 class LumbarRadiographyLogic(ScriptedLoadableModuleLogic):
-    DEFINITION_VERSION="1.8.0"
+    DEFINITION_VERSION="1.8.1"
     def createLandmarkNode(self,name):
         node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode",name); node.SetDescription("ONeSpineRx manual anatomical landmarks"); return node
     def saveMarkups(self,node,filePath):
