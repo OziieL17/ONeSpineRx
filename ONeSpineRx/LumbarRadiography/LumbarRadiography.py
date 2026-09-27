@@ -5,7 +5,12 @@ import vtk
 import ctk
 from slicer.ScriptedLoadableModule import *
 from slicer.util import VTKObservationMixin
-try:\n    from .one_spine_rx.measurements import projected_disc_geometry\n    from .one_spine_rx.geometry import sacral_reference_frame, point_in_frame_2d\nexcept (ImportError, ValueError):\n    from one_spine_rx.measurements import projected_disc_geometry\n    from one_spine_rx.geometry import sacral_reference_frame, point_in_frame_2d
+try:
+    from .one_spine_rx.measurements import projected_disc_geometry
+    from .one_spine_rx.geometry import sacral_reference_frame, point_in_frame_2d
+except (ImportError, ValueError):
+    from one_spine_rx.measurements import projected_disc_geometry
+    from one_spine_rx.geometry import sacral_reference_frame, point_in_frame_2d
 
 TRANSLATIONS = {
     "es": {
