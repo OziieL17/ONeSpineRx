@@ -740,7 +740,10 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
         lines=[]
         for section,data in results.items():
             lines.append("["+section.upper()+"]")
-            if section in ("lat","flex","ext","dynamic"): lines.extend("%s = %.2f" % (name,value) for name,value in data.items())
+            if section in ("lat","flex","ext","dynamic"):
+                for name,value in data.items():
+                    if isinstance(value,(int,float)): lines.append("%s = %.2f" % (name,value))
+                    else: lines.append("%s = %s" % (name,json.dumps(value,ensure_ascii=False)))
             elif section in ("validity","pelvic_validity","visualization","disc_geometry","foraminal_geometry","pelvic_reference"): lines.append(json.dumps(data,ensure_ascii=False))
             else:
                 for level,item in data.items(): lines.append("%s: neutral=%s%% flex=%s%% ext=%s%% delta=%s%%" % (level, self.fmt(item.get("neutral_pct")), self.fmt(item.get("flex_pct")), self.fmt(item.get("ext_pct")), self.fmt(item.get("delta_flex_ext_pct"))))
@@ -833,12 +836,33 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             line("LL_L1",q("L1 SA"),q("L1 SP")); line("LL_S1",q("S1 SA"),q("S1 SP")); self.addAngleArc("LL",q("L1 SA"),q("L1 SP"),q("S1 SA"),q("S1 SP"),r["LL_deg"],occupied)
         if s.show_L4_S1 and valid("L4_S1"):
             line("L4S1_L4",q("L4 SA"),q("L4 SP")); line("L4S1_S1",q("S1 SA"),q("S1 SP")); self.addAngleArc("L4_S1",q("L4 SA"),q("L4 SP"),q("S1 SA"),q("S1 SP"),r["LL_L4_S1_deg"],occupied)
-        if s.show_SS and valid("SS"):
-            line("SS_S1",q("S1 SA"),q("S1 SP")); anchor=self.labelPoint(q("S1 SA"),occupied); self.addMeasurementLabel("SS",anchor,"SS %.1f°" % r["SS_deg"])
         pelvic=self.lastResults.get("pelvic_validity",{}).get("pelvic_parameters_valid",False)
+        if s.show_SS and valid("SS"):
+            sa,sp=q("S1 SA"),q("S1 SP")
+            line("SS_S1",sa,sp)
+            length=max(20.0,0.75*((sp[0]-sa[0])**2+(sp[1]-sa[1])**2)**0.5)
+            href=[sa[0]+length,sa[1],sa[2]]
+            line("SS_HORIZONTAL",sa,href,(0.10,0.85,0.35))
+            self.addAngleArc("SS",sa,sp,sa,href,r["SS_deg"],occupied)
         if key=="lat" and pelvic:
-            if s.show_PI and valid("PI"): self.addMeasurementLabel("PI",self.labelPoint(q("S1 SP"),occupied),"PI %.1f°" % r["PI_deg"])
-            if s.show_PT and valid("PT"): self.addMeasurementLabel("PT",self.labelPoint(q("S1 SA"),occupied),"PT %.1f°" % r["PT_deg"])
+            sa,sp=q("S1 SA"),q("S1 SP")
+            fr,fl=q("FH_R_CENTER"),q("FH_L_CENTER")
+            sm=[(sa[i]+sp[i])/2.0 for i in range(3)]
+            fh=[(fr[i]+fl[i])/2.0 for i in range(3)]
+            length=max(20.0,0.75*((sp[0]-sa[0])**2+(sp[1]-sa[1])**2)**0.5)
+            dx,dy=sa[0]-sp[0],sa[1]-sp[1]
+            dn=max(1e-9,(dx*dx+dy*dy)**0.5)
+            n=[-dy/dn,dx/dn]
+            if (fh[0]-sm[0])*n[0]+(fh[1]-sm[1])*n[1] < 0: n=[-n[0],-n[1]]
+            normalEnd=[sm[0]+n[0]*length,sm[1]+n[1]*length,sm[2]]
+            verticalEnd=[fh[0],fh[1]+length,fh[2]]
+            if (sm[1]-fh[1])*(verticalEnd[1]-fh[1]) < 0: verticalEnd[1]=fh[1]-length
+            if s.show_PI and valid("PI"):
+                line("PI_S_H",sm,fh,(0.15,0.75,0.95)); line("PI_NORMAL",sm,normalEnd,(0.10,0.85,0.35))
+                self.addAngleArc("PI",sm,normalEnd,sm,fh,r["PI_deg"],occupied)
+            if s.show_PT and valid("PT"):
+                line("PT_H_S",fh,sm,(0.15,0.75,0.95)); line("PT_VERTICAL",fh,verticalEnd,(0.10,0.85,0.35))
+                self.addAngleArc("PT",fh,sm,fh,verticalEnd,r["PT_deg"],occupied)
         for level in VisualizationSettings.LEVELS:
             upper,lower=level.split("_")
             if s.show_IVA.get(level) and valid("IVA_"+level):
