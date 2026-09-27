@@ -691,51 +691,138 @@ class LumbarRadiographyWidget(ScriptedLoadableModuleWidget, VTKObservationMixin)
             node=self.markupNodes.get(key)
             if node and node.GetDisplayNode(): node.GetDisplayNode().SetVisibility(True); node.GetDisplayNode().SetPointLabelsVisibility(True)
         return True
-    def captureAnnotatedProjection(self,key,path):
+
+    def captureCurrentOverlay(self,key,path,title):
         volume=self.selectors[key].currentNode()
         if volume is None or key not in self.markupNodes: return False
         slicer.util.setSliceViewerLayers(background=volume,fit=True)
         for projection,node in self.markupNodes.items():
             if node.GetDisplayNode(): node.GetDisplayNode().SetVisibility(False)
-        self.buildMeasurementOverlays(key)
         widget=slicer.app.layoutManager().sliceWidget("Red")
         if not widget: return False
         pix=widget.grab(); image=pix.toImage(); painter=qt.QPainter(image); painter.setPen(qt.QColor("white")); font=painter.font(); font.setPointSize(14); font.setBold(True); painter.setFont(font)
-        title={"lat":"NEUTRAL","flex":"FLEXION","ext":"EXTENSION"}[key]; painter.drawText(18,28,title); painter.end(); return image.save(path,"PNG")
+        painter.drawText(18,28,title); painter.end(); return image.save(path,"PNG")
 
-    def generateDynamicComparison(self,directory):
-        import os
-        flex=os.path.join(directory,"Flexion_Annotated.png"); ext=os.path.join(directory,"Extension_Annotated.png")
-        if not (os.path.exists(flex) and os.path.exists(ext)): return None
-        a=qt.QImage(flex); b=qt.QImage(ext); boxHeight=150; out=qt.QImage(a.width()+b.width(),max(a.height(),b.height())+boxHeight,qt.QImage.Format_ARGB32); out.fill(qt.QColor("black"))
-        painter=qt.QPainter(out); painter.drawImage(0,0,a); painter.drawImage(a.width(),0,b); painter.setPen(qt.QColor("white")); font=painter.font(); font.setPointSize(12); painter.setFont(font)
-        lines=[]; settings=self.readVisualizationSettings("flex")
+    def captureCleanProjection(self,key,path):
+        self.clearMeasurementOverlays()
+        volume=self.selectors[key].currentNode()
+        if volume is None: return False
+        slicer.util.setSliceViewerLayers(background=volume,fit=True)
+        for node in self.markupNodes.values():
+            if node.GetDisplayNode(): node.GetDisplayNode().SetVisibility(False)
+        return self.captureCurrentOverlay(key,path,{"lat":"NEUTRAL","flex":"FLEXION","ext":"EXTENSION"}[key])
+
+    def singleMeasurementSettings(self,key,kind,level=None):
+        s=VisualizationSettings(); s.preset="batch_single"
+        if kind=="LL": s.show_LL=True
+        elif kind=="L4_S1": s.show_L4_S1=True
+        elif kind=="SS": s.show_SS=True
+        elif kind=="PI": s.show_PI=True
+        elif kind=="PT": s.show_PT=True
+        elif kind=="IVA" and level: s.show_IVA[level]=True
+        elif kind=="translation" and level: s.show_translation[level]=True
+        elif kind in ("disc","IHI") and level:
+            s.disc_levels[level]=True
+            if kind=="disc": s.show_disc_height_anterior=True; s.show_disc_height_posterior=True; s.show_disc_height_mean=True
+            else: s.show_IHI=True
+        return s
+
+    def renderSingleMeasurement(self,key,kind,path,level=None):
+        original=self.visualizationSettings[key]
+        try:
+            self.visualizationSettings[key]=self.singleMeasurementSettings(key,kind,level)
+            self.buildMeasurementOverlays(key)
+            title={"lat":"NEUTRAL","flex":"FLEXION","ext":"EXTENSION"}[key]+" — "+(kind if level is None else level.replace("_","–")+" "+kind.upper())
+            return self.captureCurrentOverlay(key,path,title)
+        finally:
+            self.visualizationSettings[key]=original
+            self.clearMeasurementOverlays()
+
+    def exportGeneralReport(self,path):
+        r=self.lastResults
+        lines=["ONeSpineRx — Lumbar Radiography","="*34,"","1. ALINEACIÓN LUMBAR"]
+        n=r.get("lat",{})
+        for label,key,unit in (("LL L1–S1","LL_deg","°"),("LL L4–S1","LL_L4_S1_deg","°"),("SS","SS_deg","°")):
+            lines.append("%s: %s%s" % (label,self.fmt(n.get(key)),unit if n.get(key) is not None else ""))
+        lines+=["","2. PARÁMETROS ESPINOPÉLVICOS"]
+        pv=r.get("pelvic_validity",{})
+        lines.append("Parámetros pélvicos válidos: "+("Sí" if pv.get("pelvic_parameters_valid") else "No"))
+        if not pv.get("pelvic_parameters_valid"): lines.append("Motivo: "+str(pv.get("pelvic_invalid_reason")))
+        for label,key in (("PI","PI_deg"),("PT","PT_deg")):
+            value=n.get(key) if pv.get("pelvic_parameters_valid") else None
+            lines.append("%s: %s%s" % (label,self.fmt(value),"°" if value is not None else ""))
+        lines+=["","3. GEOMETRÍA SEGMENTARIA"]
         for level in VisualizationSettings.LEVELS:
-            if not (settings.show_IVA.get(level) or settings.show_translation.get(level)): continue
             parts=[level.replace("_","–")]
-            dk="delta_IVA_"+level+"_deg"; dv=self.lastResults.get("dynamic",{}).get(dk)
-            if settings.show_IVA.get(level) and dv is not None: parts.append("ΔIVA F–E: %.1f°" % dv)
-            t=self.lastResults.get("translation",{}).get(level,{})
-            if settings.show_translation.get(level) and t.get("delta_flex_ext_pct") is not None:
-                if t.get("delta_flex_ext_mm") is not None: parts.append("ΔTranslation F–E: %.1f mm" % t["delta_flex_ext_mm"])
-                parts.append("ΔTranslation F–E: %.1f%%" % t["delta_flex_ext_pct"])
-            lines.append("   ".join(parts))
-        painter.drawText(qt.QRect(20,max(a.height(),b.height())+10,out.width()-40,boxHeight-20),qt.Qt.AlignLeft|qt.Qt.AlignTop,"\n".join(lines)); painter.end()
-        path=os.path.join(directory,"Dynamic_Comparison.png"); out.save(path,"PNG"); return path
+            for label,key,unit in (("IVA","IVA_"+level+"_deg","°"),("IHI","IHI_"+level+"_pct","%"),("DH ant","DH_"+level+"_anterior_mm"," mm"),("DH post","DH_"+level+"_posterior_mm"," mm"),("DH media","DH_"+level+"_mean_mm"," mm")):
+                v=n.get(key)
+                if v is not None: parts.append("%s: %.2f%s" % (label,v,unit))
+            lines.append(" | ".join(parts))
+        lines+=["","4. TRASLACIÓN SAGITAL"]
+        for level,item in r.get("translation",{}).items():
+            lines.append("%s | Neutral: %s mm / %s%% | Flexión: %s mm / %s%% | Extensión: %s mm / %s%%" % (level.replace("_","–"),self.fmt(item.get("neutral_mm")),self.fmt(item.get("neutral_pct")),self.fmt(item.get("flex_mm")),self.fmt(item.get("flex_pct")),self.fmt(item.get("ext_mm")),self.fmt(item.get("ext_pct"))))
+        lines+=["","5. MOVILIDAD DINÁMICA"]
+        for level,item in r.get("translation",{}).items():
+            iva=r.get("dynamic",{}).get("delta_IVA_"+level+"_deg")
+            lines.append("%s | ΔIVA: %s° | ΔT: %s mm / %s%%" % (level.replace("_","–"),self.fmt(iva),self.fmt(item.get("delta_flex_ext_mm")),self.fmt(item.get("delta_flex_ext_pct"))))
+        lines+=["","6. CONTROL DE CALIDAD"]
+        for key in ("lat","flex","ext"):
+            cal=self.calibrations.get(key); lines.append("%s: calibración %s" % (self.PREFIX[key],"verificada" if cal and cal.get("verified") else "no verificada"))
+        lines+=["","Nota: NA indica medición no disponible. El informe conserva datos objetivos; no emite interpretación clínica automática."]
+        with open(path,"w",encoding="utf-8") as stream: stream.write("\n".join(lines))
+        return path
+
+    def exportBatchFigures(self,directory):
+        import os
+        figures=os.path.join(directory,"figures"); resultsDir=os.path.join(directory,"results")
+        for sub in ("neutral","flexion","extension","dynamic"): os.makedirs(os.path.join(figures,sub),exist_ok=True)
+        os.makedirs(resultsDir,exist_ok=True)
+        folders={"lat":"neutral","flex":"flexion","ext":"extension"}
+        validity=self.lastResults.get("validity",{}); pelvic=self.lastResults.get("pelvic_validity",{})
+        exported=[]
+        for key,folder in folders.items():
+            if self.selectors[key].currentNode() is None or key not in self.markupNodes: continue
+            out=os.path.join(figures,folder)
+            clean=os.path.join(out,self.PREFIX[key]+"_Clean.png")
+            if self.captureCleanProjection(key,clean): exported.append(clean)
+            v=validity.get(key,{})
+            globalsToExport=(("LL","LL"),("L4_S1","L4_S1"),("SS","SS"))
+            for kind,name in globalsToExport:
+                if v.get(name,{}).get("measurement_valid"):
+                    p=os.path.join(out,kind+".png")
+                    if self.renderSingleMeasurement(key,kind,p): exported.append(p)
+            if key=="lat" and pelvic.get("pelvic_parameters_valid"):
+                for kind in ("PI","PT"):
+                    if v.get(kind,{}).get("measurement_valid"):
+                        p=os.path.join(out,kind+".png")
+                        if self.renderSingleMeasurement(key,kind,p): exported.append(p)
+            for level in VisualizationSettings.LEVELS:
+                if v.get("IVA_"+level,{}).get("measurement_valid"):
+                    p=os.path.join(out,level+"_IVA.png")
+                    if self.renderSingleMeasurement(key,"IVA",p,level): exported.append(p)
+                tm=self.lastResults.get("translation",{}).get(level,{}).get({"lat":"neutral","flex":"flex","ext":"ext"}[key],{})
+                if tm.get("measurement_valid"):
+                    p=os.path.join(out,level+"_Translation.png")
+                    if self.renderSingleMeasurement(key,"translation",p,level): exported.append(p)
+                if any(v.get(x+"_"+level,{}).get("measurement_valid") for x in ("DH_anterior","DH_posterior","DH_mean")):
+                    p=os.path.join(out,level+"_DiscHeight.png")
+                    if self.renderSingleMeasurement(key,"disc",p,level): exported.append(p)
+                if v.get("IHI_"+level,{}).get("measurement_valid"):
+                    p=os.path.join(out,level+"_IHI.png")
+                    if self.renderSingleMeasurement(key,"IHI",p,level): exported.append(p)
+        with open(os.path.join(resultsDir,"results.json"),"w",encoding="utf-8") as stream: json.dump(self.lastResults,stream,indent=2,ensure_ascii=False)
+        self.exportGeneralReport(os.path.join(resultsDir,"General_Report.txt"))
+        return exported
 
     def generateFigure(self):
-        import os
         self.calculateMeasurements()
-        directory=qt.QFileDialog.getExistingDirectory(slicer.util.mainWindow(),"Guardar imágenes anotadas / Save annotated images")
+        directory=qt.QFileDialog.getExistingDirectory(slicer.util.mainWindow(),"Exportar estudio ONeSpineRx / Export ONeSpineRx study")
         if not directory: return
-        names={"lat":"Neutral_Annotated.png","flex":"Flexion_Annotated.png","ext":"Extension_Annotated.png"}
-        for key,name in names.items():
-            if self.selectors[key].currentNode() is not None and key in self.markupNodes: self.captureAnnotatedProjection(key,os.path.join(directory,name))
-        if self.dynamicComparisonCheck.checked: self.generateDynamicComparison(directory)
-        self.lastResults["visualization"]=self.readVisualizationSettings().toDict() if self.sameVisualizationCheck.checked else {key:self.visualizationSettings[key].toDict() for key in ("lat","flex","ext")}
+        exported=self.exportBatchFigures(directory)
+        slicer.util.infoDisplay("Exportación completada: %d imágenes individuales + results.json + General_Report.txt" % len(exported))
 
 class LumbarRadiographyLogic(ScriptedLoadableModuleLogic):
-    DEFINITION_VERSION="1.5.2"
+    DEFINITION_VERSION="1.6.0"
     def createLandmarkNode(self,name):
         node=slicer.mrmlScene.AddNewNodeByClass("vtkMRMLMarkupsFiducialNode",name); node.SetDescription("ONeSpineRx manual anatomical landmarks"); return node
     def saveMarkups(self,node,filePath):
