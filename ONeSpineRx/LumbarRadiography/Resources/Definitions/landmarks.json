@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "definition_version": "1.0.0",
+  "definition_version": "1.1.0",
   "projections": {
     "LATERAL": {
       "vertebrae": [
@@ -23,7 +23,27 @@
       "optional": [
         "FH_R",
         "FH_L"
-      ]
+      ],
+      "foramen": {
+        "levels": [
+          "L1_L2",
+          "L2_L3",
+          "L3_L4",
+          "L4_L5",
+          "L5_S1"
+        ],
+        "sides": [
+          "LEFT",
+          "RIGHT"
+        ],
+        "points": [
+          "F_SUP",
+          "F_INF",
+          "F_ANT",
+          "F_POST"
+        ],
+        "description": "Manual projected neural-foramen boundary landmarks; acquired independently per level, side, and sagittal projection."
+      }
     },
     "AP": {
       "vertebrae": [
